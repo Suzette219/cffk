@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 // @ts-expect-error Tests use Bun without its global type package.
 import { test } from "bun:test";
-import { alipayFormFields } from "../../lib/alipay-manual";
+import { alipayFormFields, DEFAULT_ALIPAY_COLLECTION_IMAGE } from "../../lib/alipay-manual";
 import { canonicalizeAlipayParameters } from "../../lib/payment-utils";
 import { getJsonFormErrors } from "../../lib/json-form-values";
 import { mergePaymentProviderConfig, mergePaymentUrls } from "../../server/payment/admin.telefunc";
@@ -16,14 +16,14 @@ import { createTestDatabase } from "../helpers/sqlite-d1";
 
 const config = { schemaVersion: 1, modes: ["manual"], collectionQrImage: "https://shop.example/collection.png" };
 
-test("personal QR configuration needs an image but no API credentials or callbacks", () => {
+test("personal QR configuration supports custom images without API credentials or callbacks", () => {
   const values = { modes: config.modes, collectionQrImage: config.collectionQrImage };
   const json = mergePaymentProviderConfig({ provider: "ALIPAY", values });
   const parsed = parseProviderConfig("ALIPAY", json);
   assert.deepEqual(paymentProviderDefinitions.ALIPAY.getChannels(parsed), ["manual"]);
   assert.deepEqual(mergePaymentUrls("ALIPAY", null, values), {});
   assert.deepEqual(getJsonFormErrors(alipayFormFields(paymentProviderDefinitions.ALIPAY.fields, values), values), {});
-  for (const image of ["", "javascript:alert(1)", "data:image/png;base64,a", "//evil.example/qr.png", "/\\evil.example/qr.png", "https://user:pass@example.com/qr.png"]) {
+  for (const image of ["javascript:alert(1)", "data:image/png;base64,a", "//evil.example/qr.png", "/\\evil.example/qr.png", "https://user:pass@example.com/qr.png"]) {
     assert.throws(() => parseProviderConfig("ALIPAY", JSON.stringify({ ...config, collectionQrImage: image })));
   }
   assert.throws(() => parseProviderConfig("ALIPAY", JSON.stringify({ ...config, modes: ["manual", "web"] })));
@@ -31,6 +31,17 @@ test("personal QR configuration needs an image but no API credentials or callbac
   const localValues = { ...values, collectionQrImage: "/media/proxy/media/collection.png" };
   assert.doesNotThrow(() => mergePaymentProviderConfig({ provider: "ALIPAY", values: localValues }));
   assert.deepEqual(getJsonFormErrors(alipayFormFields(paymentProviderDefinitions.ALIPAY.fields, localValues), localValues), {});
+});
+
+test("personal QR defaults to the bundled image when the image setting is absent or blank", async () => {
+  for (const collectionQrImage of [undefined, "", "   "]) {
+    const values = { modes: ["manual"], ...(collectionQrImage === undefined ? {} : { collectionQrImage }) };
+    const json = mergePaymentProviderConfig({ provider: "ALIPAY", values });
+    assert.deepEqual(getJsonFormErrors(alipayFormFields(paymentProviderDefinitions.ALIPAY.fields, values), values), {});
+    const adapter = createProviderAdapter("ALIPAY", JSON.parse(json));
+    const payment = await adapter.create({ orderNo: "ORD-BUILTIN", amount: 1000, subject: "Order", channel: "manual", notifyUrl: "", returnUrl: "" });
+    assert.equal(payment.qrImageUrl, DEFAULT_ALIPAY_COLLECTION_IMAGE);
+  }
 });
 
 test("personal QR adapter returns the image and never treats a callback as paid", async () => {

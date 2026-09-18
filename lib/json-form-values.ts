@@ -51,7 +51,7 @@ function jsonFormValidationIssue(field: JsonFormFieldDefinition, value: unknown,
   if (field.type === "select" && !field.options?.some((option) => option.value === value)) return "invalid";
   if (field.type === "email" && !isJsonFormEmail(value)) return "invalid";
   if (field.type === "url") {
-    if (field.key === "collectionQrImage") return isCollectionQrImageUrl(value) ? null : "invalid";
+    if (field.key === "collectionQrImage") return (!field.required && !value.trim()) || isCollectionQrImageUrl(value) ? null : "invalid";
     if ((field.key === "notifyUrl" || field.key === "returnUrl") && value.startsWith("/")) return null;
     try {
       const url = new URL(value);

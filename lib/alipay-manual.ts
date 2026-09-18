@@ -1,5 +1,7 @@
 import type { JsonFormFieldDefinition } from "./json-form-values";
 
+export const DEFAULT_ALIPAY_COLLECTION_IMAGE = "/payments/alipay.jpg";
+
 export function isCollectionQrImageUrl(value: unknown): value is string {
   if (typeof value !== "string" || !value.trim()) return false;
   const text = value.trim();
@@ -26,5 +28,5 @@ export function alipayFormFields(fields: JsonFormFieldDefinition[], values: Reco
     if (field.key === "modes") return true;
     if (field.key === "collectionQrImage") return manual;
     return !isManualOnlyAlipay(values);
-  }).map((field) => field.key === "collectionQrImage" ? { ...field, required: true } : field);
+  });
 }

@@ -1,4 +1,4 @@
-import { alipayFormFields } from "@/lib/alipay-manual";
+import { alipayFormFields, DEFAULT_ALIPAY_COLLECTION_IMAGE } from "@/lib/alipay-manual";
 import { createProviderAdapter } from "./providers";
 import type { PaymentAdapter } from "./types";
 import { validateJsonFormValues, type JsonFormFieldDefinition, type JsonFormValues } from "@/lib/json-form-values";
@@ -41,7 +41,7 @@ export const paymentProviderDefinitions: Record<PaymentProviderKind, ProviderDef
     schemaVersion: 1,
     fields: [
       { key: "modes", label: "支付模式", type: "multi_select", required: true, min: 1, options: [{ label: "网页/H5", value: "web" }, { label: "当面付", value: "face_to_face" }, { label: "个人收款码（人工确认）", value: "manual" }], description: "个人收款码无需支付宝 API；到账后请在订单管理中确认收款。" },
-      { key: "collectionQrImage", label: "收款码图片地址", type: "url", description: "上传支付宝收款码到媒体库后，粘贴图片链接。请使用清晰、完整的收款码图片。" },
+      { key: "collectionQrImage", label: "收款码图片地址（可选）", type: "url", description: "已内置支付宝收款码，无需配置媒体存储。留空使用内置图片；如需更换，可填写其他图片链接。" },
       { key: "baseUrl", label: "网关地址", type: "url", required: true },
       { key: "appId", label: "应用 ID", type: "text", required: true },
       { key: "sellerId", label: "商户 PID / seller_id", type: "text", required: true },
@@ -50,7 +50,7 @@ export const paymentProviderDefinitions: Record<PaymentProviderKind, ProviderDef
       common.notifyUrl,
       common.returnUrl,
     ],
-    defaults: { schemaVersion: 1, modes: ["web"], baseUrl: "https://openapi.alipay.com", appId: "", sellerId: "", notifyUrl: "", returnUrl: "" },
+    defaults: { schemaVersion: 1, modes: ["web"], collectionQrImage: DEFAULT_ALIPAY_COLLECTION_IMAGE, baseUrl: "https://openapi.alipay.com", appId: "", sellerId: "", notifyUrl: "", returnUrl: "" },
     parseConfig: parseAlipayConfig,
     getChannels: (config) => {
       if (config.schemaVersion !== 1 || !("modes" in config)) return [];

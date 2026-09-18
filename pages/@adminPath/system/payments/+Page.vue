@@ -29,7 +29,7 @@
             <FieldSet class="gap-4"><FieldLegend>基础设置</FieldLegend><div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><Field><FieldLabel for="payment-provider-name">渠道名称</FieldLabel><Input id="payment-provider-name" v-model="form.name" autocomplete="off" /></Field><Field orientation="horizontal" class="h-9 whitespace-nowrap sm:w-32"><FieldLabel for="payment-provider-enabled">启用渠道</FieldLabel><Switch id="payment-provider-enabled" v-model="form.isEnabled" /></Field></div></FieldSet><FieldSet class="mt-6 gap-4">
               <FieldLegend>连接参数</FieldLegend><div class="grid gap-y-5">
                 <JsonFormFields :fields="activeFields" :values="form.values" :configured-secrets="form.configuredSecrets" :errors="fieldErrors" @update:values="form.values = $event" /><PaymentUrlFields v-if="!manualOnly" :provider="editing.provider" :show-notify="hasNotifyUrl" :notify-url="urlValue('notifyUrl')" :return-url="urlValue('returnUrl')" :site-url="editing.siteUrl" :errors="fieldErrors" @update:notify-url="form.values.notifyUrl = $event" @update:return-url="form.values.returnUrl = $event" /><div v-if="hasManualMode" class="flex flex-col items-start gap-3">
-                  <div class="flex flex-wrap gap-2"><Button type="button" variant="outline" @click="mediaPickerOpen = true">从媒体库选择收款码</Button><Button type="button" variant="outline" as-child><a :href="mediaPath" target="_blank" rel="noopener">前往媒体库上传</a></Button></div>
+                  <Button type="button" variant="outline" @click="form.values.collectionQrImage = DEFAULT_ALIPAY_COLLECTION_IMAGE">使用内置收款码</Button>
                   <img v-if="qrPreviewUrl" :key="qrPreviewUrl" :src="qrPreviewUrl" alt="支付宝收款码预览" class="max-h-72 max-w-72 rounded-md border object-contain" />
                   <p class="text-sm text-muted-foreground">买家扫码后，请核对支付宝实际到账金额，再到订单管理点击“确认收款”。待核实订单请人工处理或关闭。</p>
                 </div>
@@ -39,7 +39,6 @@
         </form>
       </DialogContent>
     </Dialog>
-    <MediaPickerDialog v-model:open="mediaPickerOpen" @select="form.values.collectionQrImage = $event" />
   </PaymentSettingsLayout>
 </template>
 
@@ -48,8 +47,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { toast } from "vue-sonner";
 import { usePageContext } from "vike-vue/usePageContext";
 import { RefreshCwIcon, TriangleAlertIcon } from "@lucide/vue";
-import MediaPickerDialog from "@/components/admin/MediaPickerDialog.vue";
-import { alipayFormFields, isCollectionQrImageUrl, isManualOnlyAlipay } from "@/lib/alipay-manual";
+import { alipayFormFields, DEFAULT_ALIPAY_COLLECTION_IMAGE, isCollectionQrImageUrl, isManualOnlyAlipay } from "@/lib/alipay-manual";
 import PaymentSettingsLayout from "@/components/admin/PaymentSettingsLayout.vue";
 import PaymentUrlFields from "@/components/admin/PaymentUrlFields.vue";
 import AdminDataTable, { type AdminTableColumn } from "@/components/admin/AdminDataTable.vue";
@@ -73,15 +71,17 @@ type Provider = Awaited<ReturnType<typeof onGetPaymentProviders>>[number];
 const timezone = useSiteTimezone();
 const columns: AdminTableColumn<Provider>[] = [{ key: "provider", label: "渠道" }, { key: "name", label: "名称" }, { key: "modes", label: "子渠道" }, { key: "valid", label: "配置状态" }, { key: "isEnabled", label: "状态" }, { key: "updatedAt", label: "更新时间" }];
 const pageContext = usePageContext();
-const mediaPickerOpen = ref(false);
-const mediaPath = `/${pageContext.routeParams.adminPath}/system/media`;
 const siteSettingsPath = `/${pageContext.routeParams.adminPath}/system/settings`;
 const providers = ref<Provider[]>([]); const loading = ref(false); const loaded = ref(false); const saving = ref(false); const dialogOpen = ref(false); const editing = ref<Provider | null>(null); const fieldErrors = ref<Record<string, string>>({});
 const form = reactive<{ name: string; isEnabled: boolean; values: JsonFormValues; configuredSecrets: string[] }>({ name: "", isEnabled: false, values: {}, configuredSecrets: [] });
 const manualOnly = computed(() => editing.value?.provider === "ALIPAY" && isManualOnlyAlipay(form.values));
 const hasManualMode = computed(() => editing.value?.provider === "ALIPAY" && Array.isArray(form.values.modes) && form.values.modes.includes("manual"));
 const activeFields = computed(() => editing.value?.provider === "ALIPAY" ? alipayFormFields(editing.value.fields, form.values) : editing.value?.fields ?? []);
-const qrPreviewUrl = computed(() => isCollectionQrImageUrl(form.values.collectionQrImage) ? form.values.collectionQrImage.trim() : "");
+const qrPreviewUrl = computed(() => {
+  const value = form.values.collectionQrImage;
+  if (value === undefined || (typeof value === "string" && !value.trim())) return DEFAULT_ALIPAY_COLLECTION_IMAGE;
+  return isCollectionQrImageUrl(value) ? value.trim() : "";
+});
 const hasNotifyUrl = computed(() => editing.value?.fields.some((field) => field.key === "notifyUrl") ?? false); const siteUrlMissing = computed(() => loaded.value && !providers.value[0]?.siteUrl);
 function urlValue(key: "notifyUrl" | "returnUrl") { const value = form.values[key]; return typeof value === "string" ? value : ""; }
 async function loadProviders() { loading.value = true; try { providers.value = await runTelefunc(() => onGetPaymentProviders()); } catch { /* runTelefunc owns feedback */ } finally { loaded.value = true; loading.value = false; } }

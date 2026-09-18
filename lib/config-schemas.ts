@@ -1,4 +1,4 @@
-import { isCollectionQrImageUrl } from "./alipay-manual";
+import { DEFAULT_ALIPAY_COLLECTION_IMAGE, isCollectionQrImageUrl } from "./alipay-manual";
 export type AlipayMode = "web" | "face_to_face" | "manual";
 
 export type AlipayConfig = {
@@ -158,7 +158,11 @@ export function parseAlipayConfig(json: string): AlipayConfig {
   requireSchemaVersion(value, "schemaVersion");
   const modes = requireStringArray(value.modes, "modes", ["web", "face_to_face", "manual"], 1) as AlipayMode[];
   const needsApi = modes.some((mode) => mode !== "manual");
-  const collectionQrImage = modes.includes("manual") ? requireString(value.collectionQrImage, "collectionQrImage") : undefined;
+  const collectionQrImage = modes.includes("manual")
+    ? value.collectionQrImage === undefined || (typeof value.collectionQrImage === "string" && !value.collectionQrImage.trim())
+      ? DEFAULT_ALIPAY_COLLECTION_IMAGE
+      : requireString(value.collectionQrImage, "collectionQrImage")
+    : undefined;
   if (collectionQrImage && !isCollectionQrImageUrl(collectionQrImage)) throw new Error("Invalid configuration: collectionQrImage must be an image URL or site path");
   return {
     schemaVersion: 1,
