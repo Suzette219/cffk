@@ -1,3 +1,5 @@
+import { formatCentsAsYuan } from "@/lib/payment-utils";
+import { isManualAlipayOrder } from "@/lib/alipay-manual";
 import { and, count, eq, isNull } from "drizzle-orm";
 import { getContext } from "telefunc";
 import { createDrizzleDb } from "@/database/drizzle";
@@ -142,6 +144,24 @@ export class PaymentFlowService {
     }
   }
 
+  // Only invoked by the administrator-only order action.
+  async confirmManual(orderId: number, receivedAmount: string, adminUserId: string) {
+    if (!adminUserId) appError("ADMIN_ACCESS_REQUIRED");
+    const db = createDrizzleDb(this.database);
+    const [record] = await db.select().from(order).where(eq(order.id, orderId)).limit(1);
+    if (!record) appError("ORDER_NOT_FOUND");
+    if (!isManualAlipayOrder(record)) appError("PAYMENT_MANUAL_ORDER_REQUIRED");
+    if (receivedAmount !== formatCentsAsYuan(record.amount)) appError("PAYMENT_AMOUNT_MISMATCH");
+    if (record.paymentStatus === "PAID") return { orderId: record.id };
+    if (record.status !== "PENDING" || record.paymentStatus !== "UNPAID") appError("PAYMENT_MANUAL_ORDER_NOT_PAYABLE");
+    const attempt = await paymentRepository(this.database).latestAttempt(record.id);
+    const outcome = await this.confirm(record.orderNo, `ADMIN_MANUAL:${adminUserId}`, record.amount, attempt?.id);
+    if (outcome === "NOT_PAYABLE" || outcome === "PAYMENT_EXCEPTION") appError("PAYMENT_MANUAL_ORDER_NOT_PAYABLE");
+    const [updated] = await db.select({ paymentStatus: order.paymentStatus }).from(order).where(eq(order.id, record.id)).limit(1);
+    if (updated?.paymentStatus !== "PAID") appError("PAYMENT_CONFIRM_FAILED");
+    return { orderId: record.id };
+  }
+
   async confirm(orderNo: string, source: string, amount?: number, paymentAttemptId?: number) {
     const repository = paymentRepository(this.database);
     const record = await repository.findOrder(orderNo);
@@ -149,6 +169,7 @@ export class PaymentFlowService {
     if (amount !== undefined && amount !== record.amount) appError("PAYMENT_AMOUNT_MISMATCH");
     const attempt = paymentAttemptId ? await repository.findAttempt(paymentAttemptId) : null;
     if (paymentAttemptId && (!attempt || attempt.orderId !== record.id)) appError("PAYMENT_CALLBACK_INVALID");
+    if (isManualAlipayOrder(record) && !source.startsWith("ADMIN_MANUAL:") && !(source === "ZERO_AMOUNT" && record.amount === 0)) appError("PAYMENT_MANUAL_CONFIRM_REQUIRED");
     const duplicatePayment = Boolean(paymentAttemptId && attempt?.status !== "PAID" && await repository.hasOtherPaidAttempt(record.id, paymentAttemptId));
     const result = await confirmOrderPayment(this.database, record.id);
     if (paymentAttemptId && result.outcome !== "NOT_PAYABLE") await repository.markAttemptPaid(paymentAttemptId);
@@ -171,7 +192,7 @@ export class PaymentFlowService {
     const queriedOrder = await (await import("@/server/order/service")).getOrderForQuery(this.database, orderNo, ownerUserId, email);
     if (!queriedOrder || queriedOrder.paymentStatus !== "UNPAID") return queriedOrder;
     const record = await paymentRepository(this.database).findOrder(orderNo);
-    if (!record) return queriedOrder;
+    if (!record || isManualAlipayOrder(record)) return queriedOrder;
     const provider = await getEnabledPaymentProvider(this.database, record.paymentProvider as never);
     const definition = provider && getProviderDefinition(provider.provider);
     if (!provider || !definition) return queriedOrder;

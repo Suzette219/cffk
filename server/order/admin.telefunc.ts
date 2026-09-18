@@ -1,3 +1,4 @@
+import { PaymentFlowService } from "@/server/payment/flow-service";
 import { telefuncAction } from "@/server/telefunc-action";
 import { and, count, desc, eq, gte, like, lt } from "drizzle-orm";
 import { order, orderDelivery, paymentLog } from "@/database/drizzle/schema";
@@ -70,6 +71,13 @@ async function internalOnCloseAdminOrder(input: { orderId: number }) {
   return record;
 }
 
+async function internalOnConfirmManualPayment(input: { orderId: number; receivedAmount: string }) {
+  const { database, runtime, adminUserId } = requireAdmin();
+  const result = await new PaymentFlowService(database, runtime).confirmManual(input.orderId, input.receivedAmount, adminUserId);
+  await notifyOrderEmailEvents(database, runtime);
+  return result;
+}
+
 async function internalOnRetryAutomaticDelivery(input: { orderId: number }) {
   const { database, runtime, db } = requireAdmin();
   const [snapshot] = await db.select({ fulfillmentSource: order.fulfillmentSourceSnapshot }).from(order).where(eq(order.id, input.orderId)).limit(1);
@@ -133,3 +141,5 @@ export const onGetAdminOrderDetail = telefuncAction(internalOnGetAdminOrderDetai
 export const onCloseAdminOrder = telefuncAction(internalOnCloseAdminOrder);
 export const onRetryAutomaticDelivery = telefuncAction(internalOnRetryAutomaticDelivery);
 export const onRecordManualDelivery = telefuncAction(internalOnRecordManualDelivery);
+
+export const onConfirmManualPayment = telefuncAction(internalOnConfirmManualPayment);

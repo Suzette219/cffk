@@ -1,3 +1,4 @@
+import { alipayFormFields } from "@/lib/alipay-manual";
 import { createProviderAdapter } from "./providers";
 import type { PaymentAdapter } from "./types";
 import { validateJsonFormValues, type JsonFormFieldDefinition, type JsonFormValues } from "@/lib/json-form-values";
@@ -12,7 +13,7 @@ import {
 } from "@/lib/config-schemas";
 
 export type PaymentProviderKind = "ALIPAY" | "EPAY" | "BEPUSDT" | "STRIPE" | "HASHPAY" | "PERPAY";
-export type PaymentChannel = "web" | "wap" | "face_to_face" | "alipay" | "wxpay";
+export type PaymentChannel = "web" | "wap" | "face_to_face" | "manual" | "alipay" | "wxpay";
 
 
 export type ProviderDefinition = {
@@ -39,7 +40,8 @@ export const paymentProviderDefinitions: Record<PaymentProviderKind, ProviderDef
     title: "支付宝",
     schemaVersion: 1,
     fields: [
-      { key: "modes", label: "支付模式", type: "multi_select", required: true, min: 1, options: [{ label: "网页/H5", value: "web" }, { label: "当面付", value: "face_to_face" }] },
+      { key: "modes", label: "支付模式", type: "multi_select", required: true, min: 1, options: [{ label: "网页/H5", value: "web" }, { label: "当面付", value: "face_to_face" }, { label: "个人收款码（人工确认）", value: "manual" }], description: "个人收款码无需支付宝 API；到账后请在订单管理中确认收款。" },
+      { key: "collectionQrImage", label: "收款码图片地址", type: "url", description: "上传支付宝收款码到媒体库后，粘贴图片链接。请使用清晰、完整的收款码图片。" },
       { key: "baseUrl", label: "网关地址", type: "url", required: true },
       { key: "appId", label: "应用 ID", type: "text", required: true },
       { key: "sellerId", label: "商户 PID / seller_id", type: "text", required: true },
@@ -52,7 +54,7 @@ export const paymentProviderDefinitions: Record<PaymentProviderKind, ProviderDef
     parseConfig: parseAlipayConfig,
     getChannels: (config) => {
       if (config.schemaVersion !== 1 || !("modes" in config)) return [];
-      return config.modes.map((mode) => mode === "web" ? "web" : "face_to_face");
+      return config.modes;
     },
     createAdapter: (config) => createProviderAdapter("ALIPAY", config),
 
@@ -177,7 +179,7 @@ export function parseProviderConfig(provider: string, configJson: string) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("PAYMENT_CONFIG_INVALID");
   const allowed = new Set(["schemaVersion", ...definition.fields.map((field) => field.key)]);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("PAYMENT_CONFIG_INVALID");
-  validateJsonFormValues(definition.fields, value as Record<string, unknown>);
+  validateJsonFormValues(provider === "ALIPAY" ? alipayFormFields(definition.fields, value as Record<string, unknown>) : definition.fields, value as Record<string, unknown>);
   return definition.parseConfig(configJson);
 }
 

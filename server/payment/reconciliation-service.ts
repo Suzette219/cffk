@@ -92,6 +92,7 @@ export async function reconcilePendingAlipayPayments(database: D1Database, runti
       eq(order.status, "PENDING"),
       eq(order.paymentStatus, "UNPAID"),
       eq(order.paymentProvider, "ALIPAY"),
+      sql`(${order.paymentChannel} IS NULL OR ${order.paymentChannel} != 'manual')`,
     ))
     .orderBy(asc(order.createdAt), desc(paymentAttempt.id))
     .limit(Math.max(1, Math.min(limit, 100)));

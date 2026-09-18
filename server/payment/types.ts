@@ -34,6 +34,7 @@ export type PaymentResult = {
   mode: "redirect" | "qr";
   url?: string;
   qrCode?: string;
+  qrImageUrl?: string;
   paymentOrderNo?: string;
   payableAmount?: number;
 };

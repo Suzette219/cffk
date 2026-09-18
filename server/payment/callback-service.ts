@@ -1,3 +1,4 @@
+import { isManualAlipayOrder } from "@/lib/alipay-manual";
 
 
 import { reportUnexpectedServerError } from "@/server/error-handling";
@@ -45,6 +46,7 @@ export class PaymentCallbackService {
       && result.orderNo
       && record
       && attempt
+      && !isManualAlipayOrder(record)
       && result.amount !== undefined
       && result.amount === record.amount
       && (!expectedCurrency || (result.currency !== undefined && result.currency.toUpperCase() === expectedCurrency))

@@ -29,8 +29,9 @@
                   <p class="mt-3 text-sm font-medium leading-6 text-foreground">请按此金额付款，金额必须完全一致</p>
                 </div>
                 <p class="font-medium">请使用支付宝扫码付款</p>
-                <div class="w-full max-w-72"><PaymentQrCode v-if="qrCode" :value="qrCode" /><p v-else class="py-16 text-sm text-muted-foreground">正在准备收款二维码...</p></div>
-                <p class="text-xs text-muted-foreground">支付完成后，页面会自动更新订单状态。</p>
+                <div class="w-full max-w-72"><img v-if="isManualPayment && qrImageUrl" :src="qrImageUrl" alt="支付宝收款码" class="mx-auto max-h-96 w-full object-contain" @error="error = '收款码图片加载失败，请刷新页面或联系商家。'" /><PaymentQrCode v-else-if="qrCode" :value="qrCode" /><p v-else class="py-16 text-sm text-muted-foreground">正在准备收款二维码...</p></div>
+                <template v-if="isManualPayment"><p class="text-sm">请支付 ¥{{ order.amount }}，付款时备注订单号：<span class="break-all font-mono">{{ order.orderNo }}</span></p><p class="text-sm text-muted-foreground">付款后请联系商家核实到账。商家确认收款后，页面会自动更新，请勿重复付款。</p></template>
+                <p v-else class="text-xs text-muted-foreground">支付完成后，页面会自动更新订单状态。</p>
               </template>
               <p v-else class="text-sm text-muted-foreground">该订单不使用站内扫码支付，请返回订单页面继续支付。</p>
             </div>
@@ -39,7 +40,7 @@
           <p v-else class="py-16 text-center text-sm text-muted-foreground">正在加载订单...</p>
         </CardContent>
         <CardFooter v-if="order" class="justify-end gap-3 border-t pt-5">
-          <Button v-if="order.paymentStatus === 'UNPAID' && isQrPaymentOrder(order)" variant="outline" :disabled="resuming" @click="resumePayment">{{ resuming ? "正在生成..." : "重新生成二维码" }}</Button>
+          <Button v-if="order.paymentStatus === 'UNPAID' && isQrPaymentOrder(order) && !isManualPayment" variant="outline" :disabled="resuming" @click="resumePayment">{{ resuming ? "正在生成..." : "重新生成二维码" }}</Button>
           <Button as-child><a :href="orderHref">查看订单</a></Button>
         </CardFooter>
       </Card>
@@ -50,6 +51,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
+import { isManualAlipayOrder } from "@/lib/alipay-manual";
 import PaymentQrCode from "@/components/PaymentQrCode.vue";
 import PublicNav from "@/components/storefront/PublicNav.vue";
 import StorefrontBrand from "@/components/storefront/StorefrontBrand.vue";
@@ -68,6 +70,8 @@ const orderNo = (typeof rawOrderNo === "string" ? rawOrderNo : "").trim();
 const guestEmail = ref<string | undefined>();
 const order = ref<PublicOrder | null>(null);
 const qrCode = ref("");
+const qrImageUrl = ref("");
+const isManualPayment = computed(() => !!order.value && isManualAlipayOrder(order.value));
 const payableAmount = ref<number | null>(null);
 const error = ref<string | null>(null);
 const resuming = ref(false);
@@ -91,6 +95,7 @@ async function loadOrder() {
     if (record.paymentStatus === "UNPAID" && isQrPaymentOrder(record)) {
       try { qrCode.value = sessionStorage.getItem(`payment-qr:${record.orderNo}`) ?? ""; } catch { qrCode.value = ""; }
       try { const stored = Number(sessionStorage.getItem(`payment-payable:${record.orderNo}`)); payableAmount.value = Number.isSafeInteger(stored) && stored > 0 ? stored : null; } catch { payableAmount.value = null; }
+      if (isManualPayment.value) { qrCode.value = ""; payableAmount.value = null; }
       if (!qrCode.value) await resumePayment();
       startPolling();
     }
@@ -112,11 +117,12 @@ async function resumePayment() {
   resuming.value = true;
   try {
     const payment = await runTelefunc(() => onResumeOrderPayment(queryInput()), { notifyError: false });
+    if (isManualPayment.value && payment.payment?.mode === "qr" && payment.payment.qrImageUrl) { qrImageUrl.value = payment.payment.qrImageUrl; return; }
     if (payment.payment?.mode === "qr" && payment.payment.qrCode) { qrCode.value = payment.payment.qrCode; payableAmount.value = payment.payment.payableAmount ?? null; try { sessionStorage.setItem(`payment-qr:${payment.orderNo}`, payment.payment.qrCode); if (payment.payment.payableAmount) sessionStorage.setItem(`payment-payable:${payment.orderNo}`, String(payment.payment.payableAmount)); } catch { /* Session storage is optional. */ } return; }
     error.value = "暂时无法生成支付二维码，请稍后再试。";
   } catch (cause) { error.value = userErrorMessage(cause, "暂时无法生成支付二维码，请稍后再试。"); } finally { resuming.value = false; }
 }
 function paymentStatusLabel(status: PublicOrder["paymentStatus"]) { return { UNPAID: "待支付", PAID: "已支付", FAILED: "支付失败" }[status]; }
-function isQrPaymentOrder(record: PublicOrder) { return record.paymentProvider === "PERPAY" || (record.paymentProvider === "ALIPAY" && record.paymentChannel === "face_to_face"); }
+function isQrPaymentOrder(record: PublicOrder) { return isManualAlipayOrder(record) || record.paymentProvider === "PERPAY" || (record.paymentProvider === "ALIPAY" && record.paymentChannel === "face_to_face"); }
 function isPerpayQrPaymentOrder(record: PublicOrder) { return record.paymentProvider === "PERPAY"; }
 </script>

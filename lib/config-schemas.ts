@@ -1,9 +1,10 @@
-
-export type AlipayMode = "web" | "face_to_face";
+import { isCollectionQrImageUrl } from "./alipay-manual";
+export type AlipayMode = "web" | "face_to_face" | "manual";
 
 export type AlipayConfig = {
   schemaVersion: 1;
   modes: AlipayMode[];
+  collectionQrImage?: string;
   baseUrl: string;
   appId: string;
   sellerId: string;
@@ -155,17 +156,21 @@ function requirePaymentUrl(value: unknown, field: string, allowEmpty = false) {
 export function parseAlipayConfig(json: string): AlipayConfig {
   const value = parseJsonObject(json, "Alipay");
   requireSchemaVersion(value, "schemaVersion");
-  const modes = requireStringArray(value.modes, "modes", ["web", "face_to_face"], 1) as AlipayMode[];
+  const modes = requireStringArray(value.modes, "modes", ["web", "face_to_face", "manual"], 1) as AlipayMode[];
+  const needsApi = modes.some((mode) => mode !== "manual");
+  const collectionQrImage = modes.includes("manual") ? requireString(value.collectionQrImage, "collectionQrImage") : undefined;
+  if (collectionQrImage && !isCollectionQrImageUrl(collectionQrImage)) throw new Error("Invalid configuration: collectionQrImage must be an image URL or site path");
   return {
     schemaVersion: 1,
     modes,
-    baseUrl: requireUrl(value.baseUrl, "baseUrl"),
-    appId: requireString(value.appId, "appId"),
-    sellerId: requireString(value.sellerId, "sellerId"),
-    privateKey: requireString(value.privateKey, "privateKey"),
-    alipayPublicKey: requireString(value.alipayPublicKey, "alipayPublicKey"),
-    notifyUrl: requirePaymentUrl(value.notifyUrl, "notifyUrl", true),
-    returnUrl: requirePaymentUrl(value.returnUrl, "returnUrl", true),
+    ...(collectionQrImage ? { collectionQrImage } : {}),
+    baseUrl: needsApi ? requireUrl(value.baseUrl, "baseUrl") : "",
+    appId: needsApi ? requireString(value.appId, "appId") : "",
+    sellerId: needsApi ? requireString(value.sellerId, "sellerId") : "",
+    privateKey: needsApi ? requireString(value.privateKey, "privateKey") : "",
+    alipayPublicKey: needsApi ? requireString(value.alipayPublicKey, "alipayPublicKey") : "",
+    notifyUrl: needsApi ? requirePaymentUrl(value.notifyUrl, "notifyUrl", true) : "",
+    returnUrl: needsApi ? requirePaymentUrl(value.returnUrl, "returnUrl", true) : "",
   };
 }
 

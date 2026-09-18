@@ -1,3 +1,4 @@
+import { isManualOnlyAlipay } from "@/lib/alipay-manual";
 import { telefuncAction } from "@/server/telefunc-action";
 import { asc, count, eq } from "drizzle-orm";
 
@@ -25,6 +26,7 @@ export function rebasePaymentUrl(value: unknown, fallback: string, siteUrl: stri
 }
 
 export function mergePaymentUrls(provider: PaymentProviderKind, siteUrl: string | null | undefined, values: Record<string, unknown>): Record<string, string> {
+  if (provider === "ALIPAY" && isManualOnlyAlipay(values)) return {};
   const defaults = getPaymentUrlDefaults(provider, siteUrl);
   const paths = getPaymentUrlPaths(provider);
   const hasNotifyUrl = getProviderDefinition(provider)?.fields.some((field) => field.key === "notifyUrl") ?? false;

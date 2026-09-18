@@ -22,7 +22,24 @@
       </CardContent>
     </Card>
 
-    <Dialog v-model:open="dialogOpen"><DialogContent class="grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-3xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0" @interact-outside.prevent @escape-key-down.prevent><DialogHeader class="border-b px-6 py-5 pr-14"><DialogTitle>配置{{ editing?.title ?? "支付渠道" }}</DialogTitle><DialogDescription>配置直接保存在 D1。敏感字段编辑时不会回显，留空将保留现有值。</DialogDescription></DialogHeader><form v-if="editing" class="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]" novalidate @submit.prevent="saveProvider"><div class="overflow-y-auto px-6 py-5"><FieldSet class="gap-4"><FieldLegend>基础设置</FieldLegend><div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><Field><FieldLabel for="payment-provider-name">渠道名称</FieldLabel><Input id="payment-provider-name" v-model="form.name" autocomplete="off" /></Field><Field orientation="horizontal" class="h-9 whitespace-nowrap sm:w-32"><FieldLabel for="payment-provider-enabled">启用渠道</FieldLabel><Switch id="payment-provider-enabled" v-model="form.isEnabled" /></Field></div></FieldSet><FieldSet class="mt-6 gap-4"><FieldLegend>连接参数</FieldLegend><div class="grid gap-y-5"><JsonFormFields :fields="editing.fields" :values="form.values" :configured-secrets="form.configuredSecrets" :errors="fieldErrors" @update:values="form.values = $event" /><PaymentUrlFields :provider="editing.provider" :show-notify="hasNotifyUrl" :notify-url="urlValue('notifyUrl')" :return-url="urlValue('returnUrl')" :site-url="editing.siteUrl" :errors="fieldErrors" @update:notify-url="form.values.notifyUrl = $event" @update:return-url="form.values.returnUrl = $event" /></div></FieldSet></div><DialogFooter class="border-t bg-background px-6 py-4"><Button type="button" variant="outline" :disabled="saving" @click="testProvider">校验配置</Button><DialogClose as-child><Button type="button" variant="outline" :disabled="saving">取消</Button></DialogClose><Button type="submit" :disabled="saving">{{ saving ? "保存中..." : "保存配置" }}</Button></DialogFooter></form></DialogContent></Dialog>
+    <Dialog v-model:open="dialogOpen">
+      <DialogContent class="grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-3xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0" @interact-outside.prevent @escape-key-down.prevent>
+        <DialogHeader class="border-b px-6 py-5 pr-14"><DialogTitle>配置{{ editing?.title ?? "支付渠道" }}</DialogTitle><DialogDescription>配置直接保存在 D1。敏感字段编辑时不会回显，留空将保留现有值。</DialogDescription></DialogHeader><form v-if="editing" class="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]" novalidate @submit.prevent="saveProvider">
+          <div class="overflow-y-auto px-6 py-5">
+            <FieldSet class="gap-4"><FieldLegend>基础设置</FieldLegend><div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><Field><FieldLabel for="payment-provider-name">渠道名称</FieldLabel><Input id="payment-provider-name" v-model="form.name" autocomplete="off" /></Field><Field orientation="horizontal" class="h-9 whitespace-nowrap sm:w-32"><FieldLabel for="payment-provider-enabled">启用渠道</FieldLabel><Switch id="payment-provider-enabled" v-model="form.isEnabled" /></Field></div></FieldSet><FieldSet class="mt-6 gap-4">
+              <FieldLegend>连接参数</FieldLegend><div class="grid gap-y-5">
+                <JsonFormFields :fields="activeFields" :values="form.values" :configured-secrets="form.configuredSecrets" :errors="fieldErrors" @update:values="form.values = $event" /><PaymentUrlFields v-if="!manualOnly" :provider="editing.provider" :show-notify="hasNotifyUrl" :notify-url="urlValue('notifyUrl')" :return-url="urlValue('returnUrl')" :site-url="editing.siteUrl" :errors="fieldErrors" @update:notify-url="form.values.notifyUrl = $event" @update:return-url="form.values.returnUrl = $event" /><div v-if="hasManualMode" class="flex flex-col items-start gap-3">
+                  <div class="flex flex-wrap gap-2"><Button type="button" variant="outline" @click="mediaPickerOpen = true">从媒体库选择收款码</Button><Button type="button" variant="outline" as-child><a :href="mediaPath" target="_blank" rel="noopener">前往媒体库上传</a></Button></div>
+                  <img v-if="qrPreviewUrl" :key="qrPreviewUrl" :src="qrPreviewUrl" alt="支付宝收款码预览" class="max-h-72 max-w-72 rounded-md border object-contain" />
+                  <p class="text-sm text-muted-foreground">买家扫码后，请核对支付宝实际到账金额，再到订单管理点击“确认收款”。待核实订单请人工处理或关闭。</p>
+                </div>
+              </div>
+            </FieldSet>
+          </div><DialogFooter class="border-t bg-background px-6 py-4"><Button type="button" variant="outline" :disabled="saving" @click="testProvider">校验配置</Button><DialogClose as-child><Button type="button" variant="outline" :disabled="saving">取消</Button></DialogClose><Button type="submit" :disabled="saving">{{ saving ? "保存中..." : "保存配置" }}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+    <MediaPickerDialog v-model:open="mediaPickerOpen" @select="form.values.collectionQrImage = $event" />
   </PaymentSettingsLayout>
 </template>
 
@@ -31,6 +48,8 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { toast } from "vue-sonner";
 import { usePageContext } from "vike-vue/usePageContext";
 import { RefreshCwIcon, TriangleAlertIcon } from "@lucide/vue";
+import MediaPickerDialog from "@/components/admin/MediaPickerDialog.vue";
+import { alipayFormFields, isCollectionQrImageUrl, isManualOnlyAlipay } from "@/lib/alipay-manual";
 import PaymentSettingsLayout from "@/components/admin/PaymentSettingsLayout.vue";
 import PaymentUrlFields from "@/components/admin/PaymentUrlFields.vue";
 import AdminDataTable, { type AdminTableColumn } from "@/components/admin/AdminDataTable.vue";
@@ -54,15 +73,21 @@ type Provider = Awaited<ReturnType<typeof onGetPaymentProviders>>[number];
 const timezone = useSiteTimezone();
 const columns: AdminTableColumn<Provider>[] = [{ key: "provider", label: "渠道" }, { key: "name", label: "名称" }, { key: "modes", label: "子渠道" }, { key: "valid", label: "配置状态" }, { key: "isEnabled", label: "状态" }, { key: "updatedAt", label: "更新时间" }];
 const pageContext = usePageContext();
+const mediaPickerOpen = ref(false);
+const mediaPath = `/${pageContext.routeParams.adminPath}/system/media`;
 const siteSettingsPath = `/${pageContext.routeParams.adminPath}/system/settings`;
 const providers = ref<Provider[]>([]); const loading = ref(false); const loaded = ref(false); const saving = ref(false); const dialogOpen = ref(false); const editing = ref<Provider | null>(null); const fieldErrors = ref<Record<string, string>>({});
 const form = reactive<{ name: string; isEnabled: boolean; values: JsonFormValues; configuredSecrets: string[] }>({ name: "", isEnabled: false, values: {}, configuredSecrets: [] });
+const manualOnly = computed(() => editing.value?.provider === "ALIPAY" && isManualOnlyAlipay(form.values));
+const hasManualMode = computed(() => editing.value?.provider === "ALIPAY" && Array.isArray(form.values.modes) && form.values.modes.includes("manual"));
+const activeFields = computed(() => editing.value?.provider === "ALIPAY" ? alipayFormFields(editing.value.fields, form.values) : editing.value?.fields ?? []);
+const qrPreviewUrl = computed(() => isCollectionQrImageUrl(form.values.collectionQrImage) ? form.values.collectionQrImage.trim() : "");
 const hasNotifyUrl = computed(() => editing.value?.fields.some((field) => field.key === "notifyUrl") ?? false); const siteUrlMissing = computed(() => loaded.value && !providers.value[0]?.siteUrl);
 function urlValue(key: "notifyUrl" | "returnUrl") { const value = form.values[key]; return typeof value === "string" ? value : ""; }
 async function loadProviders() { loading.value = true; try { providers.value = await runTelefunc(() => onGetPaymentProviders()); } catch { /* runTelefunc owns feedback */ } finally { loaded.value = true; loading.value = false; } }
 function openEditor(provider: Provider) { editing.value = provider; form.name = provider.name; form.isEnabled = provider.isEnabled; form.values = Object.fromEntries(Object.entries(provider.values).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value])) as JsonFormValues; form.configuredSecrets = [...provider.configuredSecrets]; fieldErrors.value = {}; dialogOpen.value = true; }
 function paymentProviderPayload() { if (!editing.value) return null; const values: JsonFormSubmitValues = buildJsonFormSubmission(editing.value.fields, form.values); return { provider: editing.value.provider as PaymentProviderKind, values }; }
-function validateForm() { if (!editing.value) return false; fieldErrors.value = getJsonFormErrors(editing.value.fields, form.values, form.configuredSecrets); const messages = Object.values(fieldErrors.value); if (messages.length) toast.error(`支付配置未完成：${messages.join(" ")}`); return messages.length === 0; }
+function validateForm() { if (!editing.value) return false; fieldErrors.value = getJsonFormErrors(activeFields.value, form.values, form.configuredSecrets); const messages = Object.values(fieldErrors.value); if (messages.length) toast.error(`支付配置未完成：${messages.join(" ")}`); return messages.length === 0; }
 async function testProvider() { if (!validateForm()) return; const payload = paymentProviderPayload(); if (!payload) return; saving.value = true; try { await runTelefunc(() => onValidatePaymentProviderConfig(payload), { successMessage: "支付配置校验通过。" }); } catch { /* runTelefunc owns feedback */ } finally { saving.value = false; } }
 function formatDate(value: unknown) { return formatDateInTimezone(typeof value === "string" || typeof value === "number" || value instanceof Date ? value : 0, timezone.value); }
 async function saveProvider() { if (!editing.value || !validateForm()) return; const payload = paymentProviderPayload(); if (!payload) return; saving.value = true; try { await runTelefunc(() => onSavePaymentProvider({ ...payload, name: form.name, isEnabled: form.isEnabled }), { successMessage: "支付渠道配置已保存。" }); dialogOpen.value = false; await loadProviders(); } catch { /* runTelefunc owns feedback */ } finally { saving.value = false; } }

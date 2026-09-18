@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { parseBepusdtConfig, parseEpayConfig, parseHashpayConfig, parseStripeConfig, parsePerpayConfig } from "@/lib/config-schemas";
+import { parseAlipayConfig, parseBepusdtConfig, parseEpayConfig, parseHashpayConfig, parseStripeConfig, parsePerpayConfig } from "@/lib/config-schemas";
 import { createPerpayAdapter } from "./perpay";
 import { createAlipayPayment, queryAlipayPayment, verifyAlipayCallback } from "./alipay";
 import type { PaymentAdapter, PaymentNotifyResult } from "./types";
@@ -61,9 +61,15 @@ function result(provider: PaymentProviderKind, values: Partial<PaymentNotifyResu
 export function createProviderAdapter(provider: PaymentProviderKind, config: Record<string, unknown>): PaymentAdapter {
   const json = JSON.stringify(config);
   if (provider === "ALIPAY") return {
-    create: async (input) => { const payment = await createAlipayPayment({ configJson: JSON.stringify({ ...config, notifyUrl: input.notifyUrl }), orderNo: input.orderNo, amount: input.amount, subject: input.subject, returnUrl: input.returnUrl, paymentChannel: input.channel }); return payment.mode === "web" ? { mode: "redirect", url: payment.redirectUrl, paymentOrderNo: payment.paymentOrderNo } : { mode: "qr", qrCode: payment.qrCode, paymentOrderNo: payment.paymentOrderNo }; },
-    verify: async ({ payload }) => result(provider, { verified: await verifyAlipayCallback(json, payload), orderNo: payload.out_trade_no, paymentOrderNo: payload.trade_no, amount: amount(payload.total_amount), status: payload.trade_status === "TRADE_SUCCESS" || payload.trade_status === "TRADE_FINISHED" ? "PAID" : "FAILED", message: "ALIPAY_CALLBACK" }),
-    query: async ({ orderNo, amount }) => queryAlipayPayment(json, orderNo, amount),
+    create: async (input) => {
+      const parsed = parseAlipayConfig(json);
+      if (input.channel === "manual") {
+        if (!parsed.modes.includes("manual") || !parsed.collectionQrImage) throw new Error("PAYMENT_CHANNEL_INVALID");
+        return { mode: "qr", qrImageUrl: parsed.collectionQrImage, paymentOrderNo: input.orderNo };
+      }
+      const payment = await createAlipayPayment({ configJson: JSON.stringify({ ...config, notifyUrl: input.notifyUrl }), orderNo: input.orderNo, amount: input.amount, subject: input.subject, returnUrl: input.returnUrl, paymentChannel: input.channel }); return payment.mode === "web" ? { mode: "redirect", url: payment.redirectUrl, paymentOrderNo: payment.paymentOrderNo } : { mode: "qr", qrCode: payment.qrCode, paymentOrderNo: payment.paymentOrderNo }; },
+    verify: async ({ payload }) => result(provider, { verified: parseAlipayConfig(json).modes.some((mode) => mode !== "manual") && await verifyAlipayCallback(json, payload), orderNo: payload.out_trade_no, paymentOrderNo: payload.trade_no, amount: amount(payload.total_amount), status: payload.trade_status === "TRADE_SUCCESS" || payload.trade_status === "TRADE_FINISHED" ? "PAID" : "FAILED", message: "ALIPAY_CALLBACK" }),
+    query: async ({ orderNo, amount }) => parseAlipayConfig(json).modes.some((mode) => mode !== "manual") ? queryAlipayPayment(json, orderNo, amount) : result(provider, { orderNo, verified: false, status: "PENDING", message: "MANUAL_PAYMENT_REQUIRES_CONFIRMATION" }),
   };
   if (provider === "EPAY") {
     const parsed = parseEpayConfig(json);

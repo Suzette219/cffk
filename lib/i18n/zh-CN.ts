@@ -160,7 +160,7 @@ export default {
     clearAddressesFailed: "清空保存地址失败，请检查浏览器存储权限。",
     addressesCleared: "已清空浏览器保存的地址。",
     addressLoadFailed: "暂时无法读取已保存地址，请本次填写。",
-    paymentChannels: { web: "网页/H5", wap: "H5", faceToFace: "当面付", alipay: "支付宝", wxpay: "微信" },
+    paymentChannels: { manual: "个人收款码（人工确认）", web: "网页/H5", wap: "H5", faceToFace: "当面付", alipay: "支付宝", wxpay: "微信" },
   },
   account: {
     title: "账户", description: "查看账户资料并管理常用收货地址。", avatarFallback: "账",

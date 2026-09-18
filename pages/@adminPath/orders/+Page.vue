@@ -24,7 +24,7 @@
       <template #cell-payment="{ row }"><Badge :variant="row.paymentStatus === 'PAID' ? 'default' : 'secondary'">{{ paymentLabel(row.paymentStatus) }}</Badge></template>
       <template #cell-delivery="{ row }"><Badge :variant="row.deliveryStatus === 'FAILED' ? 'destructive' : row.deliveryStatus === 'DELIVERED' ? 'default' : 'secondary'">{{ deliveryLabel(row.deliveryStatus) }}</Badge></template>
       <template #cell-createdAt="{ row }"><span class="whitespace-nowrap text-xs">{{ formatDate(row.createdAt) }}</span></template>
-      <template #actions="{ row }"><Button variant="ghost" size="sm" @click="showDetail(row.id)">查看</Button><Button v-if="row.status === 'PENDING'" variant="ghost" size="sm" @click="closeOrder(row.id)">关闭</Button><Button v-if="row.paymentStatus === 'PAID' && row.deliveryStatus !== 'DELIVERED'" variant="ghost" size="sm" @click="row.deliveryType === 'SUPPLIER' ? retrySupplierOrder(row.id) : openDelivery(row.id)">{{ row.deliveryType === 'SUPPLIER' ? '重试供应商发货' : '处理发货' }}</Button></template>
+      <template #actions="{ row }"><Button v-if="isManualAlipayOrder(row) && row.status === 'PENDING' && row.paymentStatus === 'UNPAID'" variant="outline" size="sm" @click="manualPaymentOrder = row">确认收款</Button><Button variant="ghost" size="sm" @click="showDetail(row.id)">查看</Button><Button v-if="row.status === 'PENDING'" variant="ghost" size="sm" @click="closeOrder(row.id)">关闭</Button><Button v-if="row.paymentStatus === 'PAID' && row.deliveryStatus !== 'DELIVERED'" variant="ghost" size="sm" @click="row.deliveryType === 'SUPPLIER' ? retrySupplierOrder(row.id) : openDelivery(row.id)">{{ row.deliveryType === 'SUPPLIER' ? '重试供应商发货' : '处理发货' }}</Button></template>
       <template #pagination><Pagination :total="total" :page="page" :page-size="pageSize" :page-size-options="[10, 20, 50, 100]" @update:page="changePage" @update:page-size="changePageSize" /></template>
     </AdminDataTable>
 
@@ -153,6 +153,13 @@
         <DialogFooter class="flex flex-wrap border-t px-6 py-4"><Button :disabled="delivering" @click="completeDelivery">确认发货</Button><Button variant="outline" :disabled="delivering" @click="retryAutomatic">重试自动发货</Button><Button variant="destructive" :disabled="delivering" @click="markDeliveryFailed">标记发货失败</Button><Button variant="ghost" :disabled="delivering" @click="closeDelivery">取消</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+    <Dialog :open="!!manualPaymentOrder" @update:open="!$event && !confirmingPayment && (manualPaymentOrder = null)">
+      <DialogContent @interact-outside.prevent @escape-key-down.prevent>
+        <DialogHeader><DialogTitle>确认支付宝收款</DialogTitle><DialogDescription>请先在支付宝账单中核实实际到账。确认后将按商品设置开始发货。</DialogDescription></DialogHeader>
+        <div v-if="manualPaymentOrder" class="flex flex-col gap-2 text-sm"><p class="break-all">订单号：{{ manualPaymentOrder.orderNo }}</p><p>应到账金额：¥{{ manualPaymentOrder.amount }}</p><p>请核对金额及订单备注，避免将其他买家的付款记入本订单。</p></div>
+        <DialogFooter><Button variant="outline" :disabled="confirmingPayment" @click="manualPaymentOrder = null">取消</Button><Button :disabled="confirmingPayment" @click="confirmManualPayment">{{ confirmingPayment ? "正在确认..." : "已核实到账，确认收款" }}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>
 </template>
 
@@ -173,10 +180,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RefreshCwIcon } from "@lucide/vue";
 import { runTelefunc } from "@/lib/telefunc-client";
 import { formatDateInTimezone, useSiteTimezone } from "@/lib/site-timezone";
-import { onCloseAdminOrder, onGetAdminOrderDetail, onGetAdminOrders, onRecordManualDelivery, onRetryAutomaticDelivery } from "@/server/order/admin.telefunc";
+import { isManualAlipayOrder } from "@/lib/alipay-manual";
+import { onConfirmManualPayment, onCloseAdminOrder, onGetAdminOrderDetail, onGetAdminOrders, onRecordManualDelivery, onRetryAutomaticDelivery } from "@/server/order/admin.telefunc";
 
 type Order = Awaited<ReturnType<typeof onGetAdminOrders>>["orders"][number];
 const timezone = useSiteTimezone();
+const manualPaymentOrder = ref<Order | null>(null);
+const confirmingPayment = ref(false);
+async function confirmManualPayment() {
+  const record = manualPaymentOrder.value;
+  if (!record || confirmingPayment.value) return;
+  confirmingPayment.value = true;
+  try {
+    await runTelefunc(() => onConfirmManualPayment({ orderId: record.id, receivedAmount: record.amount }), { successMessage: "收款已确认，请查看订单发货状态。" });
+    manualPaymentOrder.value = null;
+    await loadOrders();
+    if (detail.value?.order.id === record.id) await showDetail(record.id);
+  } catch { /* runTelefunc owns feedback. */ } finally { confirmingPayment.value = false; }
+}
 type Detail = Awaited<ReturnType<typeof onGetAdminOrderDetail>>;
 const deliveryContents = computed(() => detail.value?.deliveries.flatMap((item) => {
   if (!item.contentSnapshot) return [];
