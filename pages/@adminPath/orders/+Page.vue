@@ -7,7 +7,7 @@
       <template #toolbar>
         <div class="flex flex-wrap items-center gap-2">
           <Input v-model="filters.query" class="h-8 w-56" placeholder="按订单号搜索" @keyup.enter="resetAndLoad" />
-          <Select :model-value="filters.status || 'ALL'" @update:model-value="filters.status = $event === 'ALL' ? '' : $event as Order['status']"><SelectTrigger size="sm" class="w-36 shrink-0"><SelectValue placeholder="全部订单状态" /></SelectTrigger><SelectContent><SelectItem value="ALL">全部订单状态</SelectItem><SelectItem value="PENDING">待支付</SelectItem><SelectItem value="PAID">已支付</SelectItem><SelectItem value="DELIVERED">已发货</SelectItem><SelectItem value="CLOSED">已关闭</SelectItem><SelectItem value="FAILED">失败</SelectItem></SelectContent></Select>
+          <Select :model-value="filters.status || 'ALL'" @update:model-value="filters.status = $event === 'ALL' ? '' : $event as Order['status']"><SelectTrigger size="sm" class="w-36 shrink-0"><SelectValue placeholder="全部订单状态" /></SelectTrigger><SelectContent><SelectItem value="ALL">全部订单状态</SelectItem><SelectItem value="PENDING">待支付</SelectItem><SelectItem value="PAID">已支付</SelectItem><SelectItem value="DELIVERED">已发货</SelectItem><SelectItem value="CLOSED">已关闭 / 已取消</SelectItem><SelectItem value="FAILED">失败</SelectItem></SelectContent></Select>
           <Select :model-value="filters.deliveryStatus || 'ALL'" @update:model-value="filters.deliveryStatus = $event === 'ALL' ? '' : $event as Order['deliveryStatus']"><SelectTrigger size="sm" class="w-36 shrink-0"><SelectValue placeholder="全部发货状态" /></SelectTrigger><SelectContent><SelectItem value="ALL">全部发货状态</SelectItem><SelectItem value="NOT_DELIVERED">未发货</SelectItem><SelectItem value="DELIVERING">发货中</SelectItem><SelectItem value="DELIVERED">已发货</SelectItem><SelectItem value="FAILED">发货失败</SelectItem></SelectContent></Select>
           <div class="w-64 shrink-0"><DateRangePicker v-model="dateRange" /></div>
           <Button size="sm" @click="resetAndLoad">查询</Button>
@@ -16,6 +16,7 @@
         <Button variant="outline" size="sm" :disabled="loading" aria-label="刷新" title="刷新" @click="loadOrders"><RefreshCwIcon :class="loading ? 'animate-spin' : ''" />刷新</Button>
       </template>
       <template #cell-orderNo="{ row }"><span class="font-mono text-xs">{{ row.orderNo }}</span></template>
+      <template #cell-status="{ row }"><Badge :variant="orderStatusVariant(row.status)">{{ orderStatusLabel(row) }}</Badge></template>
       <template #cell-productName="{ value }"><span class="font-medium">{{ value }}</span></template>
       <template #cell-quantity="{ value }"><span>{{ value }}</span></template>
       <template #cell-deliveryType="{ value }"><span class="text-sm">{{ deliveryTypeLabel(value) }}</span></template>
@@ -184,6 +185,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RefreshCwIcon } from "@lucide/vue";
 import { runTelefunc } from "@/lib/telefunc-client";
 import { formatDateInTimezone, useSiteTimezone } from "@/lib/site-timezone";
+import { orderStatusVariant } from "@/lib/order-state";
 import { isManualAlipayOrder } from "@/lib/alipay-manual";
 import { onConfirmManualPayment, onCloseAdminOrder, onGetAdminOrderDetail, onGetAdminOrders, onRecordManualDelivery, onRetryAutomaticDelivery } from "@/server/order/admin.telefunc";
 
@@ -226,7 +228,7 @@ const deliveryContents = computed(() => detail.value?.deliveries.flatMap((item) 
   }
 }) ?? []);
 const columns: AdminTableColumn<Order>[] = [
-  { key: "orderNo", label: "订单" }, { key: "productName", label: "商品" }, { key: "quantity", label: "数量" }, { key: "deliveryType", label: "发货方式" }, { key: "contactValue", label: "联系方式" }, { key: "amount", label: "金额" }, { key: "payment", label: "支付" }, { key: "delivery", label: "发货" }, { key: "createdAt", label: "创建时间" },
+  { key: "orderNo", label: "订单" }, { key: "status", label: "订单状态" }, { key: "productName", label: "商品" }, { key: "quantity", label: "数量" }, { key: "deliveryType", label: "发货方式" }, { key: "contactValue", label: "联系方式" }, { key: "amount", label: "金额" }, { key: "payment", label: "支付" }, { key: "delivery", label: "发货" }, { key: "createdAt", label: "创建时间" },
 ];
 const orders = ref<Order[]>([]); const detail = ref<Detail | null>(null); const detailOpen = ref(false); const loading = ref(false); const delivering = ref(false); const page = ref(1); const pageSize = ref(10); const total = ref(0); const deliveryOpen = ref(false); const deliveryOrderId = ref<number | null>(null); const deliveryContent = ref("");
 const filters = reactive<{ query: string; status: "" | Order["status"]; deliveryStatus: "" | Order["deliveryStatus"]; startDate: string; endDate: string }>({ query: "", status: "", deliveryStatus: "", startDate: "", endDate: "" });
@@ -248,6 +250,11 @@ function changePage(value: number) { page.value = value; void loadOrders(); }
 function changePageSize(value: number) { pageSize.value = value; page.value = 1; void loadOrders(); }
 
 function formatDate(value: Date | string | number) { return formatDateInTimezone(value, timezone.value); }
+function orderStatusLabel(record: Order) {
+  if (record.status === "CLOSED" && record.cancelledByBuyer) return "已取消";
+  if (record.status === "PENDING" && record.paymentProofSubmitted) return "等待核实";
+  return { PENDING: "待支付", PAID: "已支付", DELIVERED: "已发货", CLOSED: "已关闭", FAILED: "失败" }[record.status];
+}
 function paymentLabel(value: Order["paymentStatus"]) { return { UNPAID: "待支付", PAID: "已支付", FAILED: "支付失败" }[value]; }
 function deliveryLabel(value: Order["deliveryStatus"]) { return { NOT_DELIVERED: "未发货", DELIVERING: "发货中", DELIVERED: "已发货", FAILED: "发货失败" }[value]; }
 function deliveryTypeLabel(value: unknown) {
