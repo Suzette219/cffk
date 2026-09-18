@@ -1,6 +1,6 @@
 import { PaymentFlowService } from "@/server/payment/flow-service";
 import { telefuncAction } from "@/server/telefunc-action";
-import { and, count, desc, eq, gte, isNull, like, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, like, lt, sql } from "drizzle-orm";
 import { order, orderDelivery, paymentLog, orderPaymentProof } from "@/database/drizzle/schema";
 import { appError } from "@/lib/app-error";
 import { formatCentsAsYuan } from "@/lib/payment-utils";
@@ -33,7 +33,7 @@ async function internalOnGetAdminOrders(input?: { query?: string; status?: Order
   const { database, db } = requireAdmin();
   const page = Math.max(1, Math.floor(input?.page ?? 1));
   const pageSize = Math.min(100, Math.max(10, Math.floor(input?.pageSize ?? 20)));
-  const conditions = [isNull(order.deletedAt)];
+  const conditions = [];
   if (input?.query?.trim()) conditions.push(like(order.orderNo, `%${input.query.trim()}%`));
   if (input?.status) conditions.push(eq(order.status, input.status));
   if (input?.deliveryStatus) conditions.push(eq(order.deliveryStatus, input.deliveryStatus));
@@ -144,10 +144,3 @@ export const onRetryAutomaticDelivery = telefuncAction(internalOnRetryAutomaticD
 export const onRecordManualDelivery = telefuncAction(internalOnRecordManualDelivery);
 
 export const onConfirmManualPayment = telefuncAction(internalOnConfirmManualPayment);
-
-async function internalOnDeleteAdminOrder(input: { orderId: number }) {
-  const { database, adminUserId } = requireAdmin();
-  const { deleteManagedOrder } = await import("@/server/admin-deletion");
-  return deleteManagedOrder(database, input.orderId, adminUserId);
-}
-export const onDeleteAdminOrder = telefuncAction(internalOnDeleteAdminOrder);

@@ -20,7 +20,6 @@ async function internalOnGetAdminUsers(input?: { query?: string; page?: number; 
   const query = input?.query?.trim().slice(0, 128);
   const where = and(
     isNull(adminBootstrap.userId),
-    isNull(user.deletedAt),
     query ? or(like(user.name, `%${query}%`), like(user.email, `%${query}%`)) : undefined,
   );
   const [users, totalRows] = await Promise.all([
@@ -95,7 +94,7 @@ async function internalOnUpdateAdminUser(input: { userId?: unknown; name?: unkno
   const [target] = await db.select({ id: user.id, email: user.email })
     .from(user)
     .leftJoin(adminBootstrap, and(eq(adminBootstrap.id, 1), eq(adminBootstrap.userId, user.id)))
-    .where(and(eq(user.id, userId), isNull(adminBootstrap.userId), isNull(user.deletedAt)))
+    .where(and(eq(user.id, userId), isNull(adminBootstrap.userId)))
     .limit(1);
   if (!target) appError("ADMIN_USER_NOT_FOUND");
 
@@ -124,18 +123,18 @@ async function internalOnSetAdminUserDisabled(input: { userId?: unknown; disable
   const [target] = await db.select({ id: user.id, isRoot: adminBootstrap.userId })
     .from(user)
     .leftJoin(adminBootstrap, and(eq(adminBootstrap.id, 1), eq(adminBootstrap.userId, user.id)))
-    .where(and(eq(user.id, userId), isNull(user.deletedAt)))
+    .where(eq(user.id, userId))
     .limit(1);
   if (!target) appError("ADMIN_USER_NOT_FOUND");
   if (target.isRoot) appError("ADMIN_ROOT_USER_STATUS_CHANGE_FORBIDDEN");
 
   if (input.disabled) {
     await db.batch([
-      db.update(user).set({ disabledAt: new Date(), updatedAt: new Date() }).where(and(eq(user.id, userId), isNull(user.deletedAt))),
+      db.update(user).set({ disabledAt: new Date(), updatedAt: new Date() }).where(eq(user.id, userId)),
       db.delete(session).where(eq(session.userId, userId)),
     ]);
   } else {
-    await db.update(user).set({ disabledAt: null, updatedAt: new Date() }).where(and(eq(user.id, userId), isNull(user.deletedAt)));
+    await db.update(user).set({ disabledAt: null, updatedAt: new Date() }).where(eq(user.id, userId));
   }
 }
 
@@ -143,10 +142,3 @@ export const onGetAdminUsers = telefuncAction(internalOnGetAdminUsers);
 export const onCreateAdminUser = telefuncAction(internalOnCreateAdminUser);
 export const onUpdateAdminUser = telefuncAction(internalOnUpdateAdminUser);
 export const onSetAdminUserDisabled = telefuncAction(internalOnSetAdminUserDisabled);
-
-async function internalOnDeleteAdminUser(input: { userId: string }) {
-  const { database, adminUserId } = requireAdmin();
-  const { deleteManagedUser } = await import("@/server/admin-deletion");
-  return deleteManagedUser(database, text(input?.userId, "ADMIN_USER_NOT_FOUND", 255), adminUserId);
-}
-export const onDeleteAdminUser = telefuncAction(internalOnDeleteAdminUser);

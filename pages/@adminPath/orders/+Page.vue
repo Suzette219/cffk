@@ -24,17 +24,10 @@
       <template #cell-payment="{ row }"><Badge :variant="row.paymentStatus === 'PAID' ? 'default' : 'secondary'">{{ paymentLabel(row.paymentStatus) }}</Badge></template>
       <template #cell-delivery="{ row }"><Badge :variant="row.deliveryStatus === 'FAILED' ? 'destructive' : row.deliveryStatus === 'DELIVERED' ? 'default' : 'secondary'">{{ deliveryLabel(row.deliveryStatus) }}</Badge></template>
       <template #cell-createdAt="{ row }"><span class="whitespace-nowrap text-xs">{{ formatDate(row.createdAt) }}</span></template>
-      <template #actions="{ row }"><Button v-if="isManualAlipayOrder(row) && row.status === 'PENDING' && row.paymentStatus === 'UNPAID'" variant="outline" size="sm" @click="openManualPayment(row)">{{ row.paymentProofSubmitted ? "核实付款凭证" : "确认收款" }}</Button><Button variant="ghost" size="sm" @click="showDetail(row.id)">查看</Button><Button v-if="row.status === 'CLOSED' && row.paymentStatus === 'UNPAID'" variant="destructive" size="sm" :disabled="deletingOrder" @click="deleteTarget = row">删除</Button><Button v-if="row.status === 'PENDING'" variant="ghost" size="sm" @click="closeOrder(row.id)">关闭</Button><Button v-if="row.paymentStatus === 'PAID' && row.deliveryStatus !== 'DELIVERED'" variant="ghost" size="sm" @click="row.deliveryType === 'SUPPLIER' ? retrySupplierOrder(row.id) : openDelivery(row.id)">{{ row.deliveryType === 'SUPPLIER' ? '重试供应商发货' : '处理发货' }}</Button></template>
+      <template #actions="{ row }"><Button v-if="isManualAlipayOrder(row) && row.status === 'PENDING' && row.paymentStatus === 'UNPAID'" variant="outline" size="sm" @click="openManualPayment(row)">{{ row.paymentProofSubmitted ? "核实付款凭证" : "确认收款" }}</Button><Button variant="ghost" size="sm" @click="showDetail(row.id)">查看</Button><Button v-if="row.status === 'PENDING'" variant="ghost" size="sm" @click="closeOrder(row.id)">关闭</Button><Button v-if="row.paymentStatus === 'PAID' && row.deliveryStatus !== 'DELIVERED'" variant="ghost" size="sm" @click="row.deliveryType === 'SUPPLIER' ? retrySupplierOrder(row.id) : openDelivery(row.id)">{{ row.deliveryType === 'SUPPLIER' ? '重试供应商发货' : '处理发货' }}</Button></template>
       <template #pagination><Pagination :total="total" :page="page" :page-size="pageSize" :page-size-options="[10, 20, 50, 100]" @update:page="changePage" @update:page-size="changePageSize" /></template>
     </AdminDataTable>
 
-    <Dialog :open="Boolean(deleteTarget)" @update:open="!deletingOrder && !$event && (deleteTarget = null)">
-      <DialogContent :show-close-button="!deletingOrder" @interact-outside.prevent @escape-key-down.prevent>
-        <DialogHeader><DialogTitle>删除订单</DialogTitle><DialogDescription>将此已关闭订单从订单管理列表移除。历史交易记录及付款凭证保留用于核对，买家仍可查询原订单。</DialogDescription></DialogHeader>
-        <p class="break-all font-mono text-sm">{{ deleteTarget?.orderNo }}</p>
-        <DialogFooter><Button variant="outline" :disabled="deletingOrder" @click="deleteTarget = null">取消</Button><Button variant="destructive" :disabled="deletingOrder" @click="deleteOrder">{{ deletingOrder ? '删除中...' : '确认删除' }}</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
     <Dialog v-model:open="detailOpen">
       <DialogContent class="grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-5xl">
         <DialogHeader class="border-b px-5 py-4 pr-16 sm:px-6 sm:py-5 sm:pr-20">
@@ -192,24 +185,10 @@ import { RefreshCwIcon } from "@lucide/vue";
 import { runTelefunc } from "@/lib/telefunc-client";
 import { formatDateInTimezone, useSiteTimezone } from "@/lib/site-timezone";
 import { isManualAlipayOrder } from "@/lib/alipay-manual";
-import { onDeleteAdminOrder, onConfirmManualPayment, onCloseAdminOrder, onGetAdminOrderDetail, onGetAdminOrders, onRecordManualDelivery, onRetryAutomaticDelivery } from "@/server/order/admin.telefunc";
+import { onConfirmManualPayment, onCloseAdminOrder, onGetAdminOrderDetail, onGetAdminOrders, onRecordManualDelivery, onRetryAutomaticDelivery } from "@/server/order/admin.telefunc";
 
 type Order = Awaited<ReturnType<typeof onGetAdminOrders>>["orders"][number];
 const timezone = useSiteTimezone();
-const deleteTarget = ref<Order | null>(null);
-const deletingOrder = ref(false);
-async function deleteOrder() {
-  const target = deleteTarget.value;
-  if (!target || deletingOrder.value) return;
-  deletingOrder.value = true;
-  try {
-    await runTelefunc(() => onDeleteAdminOrder({ orderId: target.id }), { successMessage: "订单已从管理列表删除。" });
-    deleteTarget.value = null;
-    if (detail.value?.order.id === target.id) { detailOpen.value = false; detail.value = null; }
-    if (orders.value.length === 1 && page.value > 1) page.value -= 1;
-    await loadOrders();
-  } catch { /* runTelefunc owns feedback. */ } finally { deletingOrder.value = false; }
-}
 const manualPaymentOrder = ref<Order | null>(null);
 const confirmingPayment = ref(false);
 const loadingProof = ref(false);
