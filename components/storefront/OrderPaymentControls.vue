@@ -1,7 +1,8 @@
 <template>
   <div class="flex min-w-0 flex-1 flex-col items-start gap-2">
-    <OrderPaymentCountdown :created-at="createdAt" :paused="busy" @refresh="emit('refresh')" />
-    <Button type="button" variant="outline" :disabled="busy || disabled" @click="open = true">{{ messages.orderPayment.cancel }}</Button>
+    <p v-if="proofSubmitted" class="text-sm text-muted-foreground">付款凭证已提交，等待核实。订单不会自动取消。</p>
+    <OrderPaymentCountdown v-else :created-at="createdAt" :paused="busy" @refresh="emit('refresh')" />
+    <Button v-if="!proofSubmitted" type="button" variant="outline" :disabled="busy || disabled" @click="open = true">{{ messages.orderPayment.cancel }}</Button>
     <Dialog :open="open" @update:open="!busy && (open = $event)">
       <DialogContent :show-close-button="!busy" @interact-outside.prevent @escape-key-down.prevent>
         <DialogHeader><DialogTitle>{{ messages.orderPayment.title }}</DialogTitle><DialogDescription>{{ messages.orderPayment.description }}</DialogDescription></DialogHeader>
@@ -24,13 +25,13 @@ import { useStorefrontPreferences } from "@/lib/storefront-preferences";
 import { runTelefunc } from "@/lib/telefunc-client";
 import { onCancelOrder } from "@/server/order/public.telefunc";
 
-const props = defineProps<{ orderNo: string; createdAt: string | Date; email?: string; disabled?: boolean }>();
+const props = defineProps<{ orderNo: string; createdAt: string | Date; email?: string; disabled?: boolean; proofSubmitted?: boolean }>();
 const emit = defineEmits<{ cancelled: []; refresh: []; busy: [value: boolean] }>();
 const { messages } = useStorefrontPreferences();
 const open = ref(false);
 const busy = ref(false);
 async function cancel() {
-  if (busy.value || props.disabled) return;
+  if (busy.value || props.disabled || props.proofSubmitted) return;
   busy.value = true;
   emit("busy", true);
   try {

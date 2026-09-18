@@ -344,6 +344,7 @@ export async function processPendingAutomaticDeliveries(database: D1Database, li
 }
 
 export type QueriedOrder = {
+  paymentProof: import("@/lib/payment-proof").PaymentProofSummary | null;
   orderNo: string;
   status: "PENDING" | "PAID" | "DELIVERED" | "CLOSED" | "FAILED";
   paymentStatus: "UNPAID" | "PAID" | "FAILED";
@@ -374,8 +375,10 @@ export async function getOrderForQuery(database: D1Database, orderNo: string, ow
   const db = createDrizzleDb(database);
   const [record] = await db.select({ id: order.id, orderNo: order.orderNo, status: order.status, paymentStatus: order.paymentStatus, deliveryStatus: order.deliveryStatus, paymentProvider: order.paymentProvider, paymentChannel: order.paymentChannel, productName: order.productNameSnapshot, quantity: order.quantity, amount: order.amount, createdAt: order.createdAt }).from(order).where(and(eq(order.orderNo, normalizedOrderNo), access)).limit(1);
   if (!record) return null;
+  const proof = await database.prepare("SELECT transactionNo, screenshot IS NOT NULL AS hasScreenshot, createdAt FROM orderPaymentProof WHERE orderId = ?").bind(record.id).first<{ transactionNo: string | null; hasScreenshot: number; createdAt: number }>();
   const deliveries = await db.select({ contentSnapshot: orderDelivery.contentSnapshot }).from(orderDelivery).where(and(eq(orderDelivery.orderId, record.id), eq(orderDelivery.status, "SUCCESS"))).orderBy(asc(orderDelivery.id));
   return {
+    paymentProof: proof ? { ...proof, hasScreenshot: Boolean(proof.hasScreenshot), createdAt: new Date(proof.createdAt) } : null,
     orderNo: record.orderNo,
     status: record.status,
     paymentStatus: record.paymentStatus,
@@ -406,6 +409,7 @@ export async function closeExpiredPendingOrders(database: D1Database, cutoff: Da
     eq(order.status, "PENDING"),
     eq(order.paymentStatus, "UNPAID"),
     lte(order.createdAt, cutoff),
+    sql`NOT EXISTS (SELECT 1 FROM orderPaymentProof WHERE orderId = ${order.id})`,
     or(sql`${order.paymentProvider} != 'ALIPAY'`, eq(order.paymentChannel, "manual"), closeableAlipayOrderIds.length ? inArray(order.id, closeableAlipayOrderIds) : sql`0 = 1`),
   )).orderBy(asc(order.createdAt), asc(order.id)).limit(limit);
   let closed = 0;
@@ -421,9 +425,10 @@ export async function closePendingOrder(database: D1Database, orderId: number, r
   const statements: D1PreparedStatement[] = [];
   if (record.physicalStockReserved && record.productSkuId !== null) statements.push(database.prepare("UPDATE productSku SET physicalStock = physicalStock + ?, updatedAt = ? WHERE id = ? AND EXISTS (SELECT 1 FROM `order` WHERE id = ? AND status = 'PENDING' AND paymentStatus = 'UNPAID' AND physicalStockReserved = 1)").bind(record.quantity, now, record.productSkuId, orderId));
   if (record.discountCodeId !== null) statements.push(database.prepare("UPDATE discountCode SET reservedCount = CASE WHEN reservedCount > 0 THEN reservedCount - 1 ELSE 0 END, updatedAt = ? WHERE id = ? AND EXISTS (SELECT 1 FROM `order` WHERE id = ? AND status = 'PENDING' AND paymentStatus = 'UNPAID')").bind(now, record.discountCodeId, orderId));
+  const proofGuard = reason === "AUTO_CLOSE" || reason === "USER_CANCEL" ? " AND NOT EXISTS (SELECT 1 FROM orderPaymentProof WHERE orderId = `order`.id)" : "";
   const orderUpdateIndex = statements.length;
   statements.push(
-    database.prepare("UPDATE `order` SET status = 'CLOSED', physicalStockReserved = 0, closedAt = ?, updatedAt = ? WHERE id = ? AND status = 'PENDING' AND paymentStatus = 'UNPAID'").bind(now, now, orderId),
+    database.prepare("UPDATE `order` SET status = 'CLOSED', physicalStockReserved = 0, closedAt = ?, updatedAt = ? WHERE id = ? AND status = 'PENDING' AND paymentStatus = 'UNPAID'" + proofGuard).bind(now, now, orderId),
     database.prepare("INSERT INTO transactionGuard (id, value) VALUES (1, changes()) ON CONFLICT(id) DO UPDATE SET value = excluded.value"),
   );
   try {

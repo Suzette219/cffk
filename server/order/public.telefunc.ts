@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { getContext } from "telefunc";
 import { createDrizzleDb } from "@/database/drizzle";
 import { order } from "@/database/drizzle/schema";
@@ -20,6 +20,7 @@ export type AccountOrderSummary = {
   paymentStatus: PublicOrder["paymentStatus"];
   deliveryStatus: PublicOrder["deliveryStatus"];
   createdAt: Date;
+  paymentProofSubmitted: boolean;
 };
 
 export type AccountOrderList = {
@@ -37,6 +38,7 @@ async function internalOnListAccountOrders(): Promise<AccountOrderList> {
     paymentStatus: order.paymentStatus,
     deliveryStatus: order.deliveryStatus,
     createdAt: order.createdAt,
+    paymentProofSubmitted: sql<boolean>`EXISTS (SELECT 1 FROM orderPaymentProof WHERE orderId = ${order.id})`.mapWith(Boolean),
   }).from(order)
     .where(eq(order.ownerUserId, user.id))
     .orderBy(desc(order.createdAt), desc(order.id))
@@ -96,3 +98,13 @@ async function internalOnCancelOrder(input: { orderNo: string; email?: string })
 }
 
 export const onCancelOrder = telefuncAction(internalOnCancelOrder);
+
+async function internalOnSubmitPaymentProof(input: import("./payment-proof").PaymentProofInput) {
+  const context = getContext<TelefuncContext>();
+  if (!context.env?.DB) appError("DATABASE_UNAVAILABLE");
+  const userId = context.user?.id ?? null;
+  await enforceOrderRequestRateLimit(context.env.DB, { action: "PROOF", userId, clientIp: context.clientIp });
+  const { submitPaymentProof } = await import("./payment-proof");
+  return submitPaymentProof(context.env.DB, input, userId);
+}
+export const onSubmitPaymentProof = telefuncAction(internalOnSubmitPaymentProof);

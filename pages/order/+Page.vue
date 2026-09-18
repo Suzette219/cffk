@@ -116,7 +116,7 @@
               </Alert>
             </CardContent>
             <CardFooter v-if="result.status === 'PENDING' && result.paymentStatus === 'UNPAID'" class="flex-wrap items-end justify-end gap-3 border-t pt-5">
-              <OrderPaymentControls :key="result.orderNo" :order-no="result.orderNo" :created-at="result.createdAt" :email="activeQuery?.email" :disabled="resumingPayment" @busy="cancellingPayment = $event" @cancelled="refreshSelectedOrder" @refresh="refreshSelectedOrder" />
+              <OrderPaymentControls :key="result.orderNo" :order-no="result.orderNo" :created-at="result.createdAt" :proof-submitted="Boolean(result.paymentProof)" :email="activeQuery?.email" :disabled="resumingPayment" @busy="cancellingPayment = $event" @cancelled="refreshSelectedOrder" @refresh="refreshSelectedOrder" />
               <Button v-if="isFaceToFacePayment" :disabled="cancellingPayment" as-child><a :href="`/checkout?orderNo=${encodeURIComponent(result.orderNo)}`">前往支付</a></Button><Button v-else :disabled="resumingPayment || cancellingPayment" @click="resumePayment">{{ resumingPayment ? "正在生成支付信息..." : "继续支付" }}</Button>
             </CardFooter>
           </Card>

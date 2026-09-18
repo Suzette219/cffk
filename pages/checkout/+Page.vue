@@ -23,24 +23,25 @@
               <div><dt class="text-xs text-muted-foreground">支付状态</dt><dd class="mt-1 font-medium">{{ paymentStatusLabel(order.paymentStatus) }}</dd></div>
             </dl>
             <div v-if="order.status === 'PENDING' && order.paymentStatus === 'UNPAID'" class="grid justify-items-center gap-4 border-t pt-6 text-center">
-              <template v-if="isQrPaymentOrder(order)">
+              <template v-if="isQrPaymentOrder(order) && !order.paymentProof && !proofSubmitted">
                 <div v-if="isPerpayQrPaymentOrder(order) && payableAmount !== null" class="w-full rounded-xl border-2 border-primary/35 px-5 py-4 text-center shadow-sm" aria-live="polite">
                   <p class="mt-1 text-4xl font-bold tracking-tight text-primary sm:text-5xl"><span class="text-2xl sm:text-3xl">¥</span>{{ formatCentsAsYuan(payableAmount) }}</p>
                   <p class="mt-3 text-sm font-medium leading-6 text-foreground">请按此金额付款，金额必须完全一致</p>
                 </div>
                 <p class="font-medium">请使用支付宝扫码付款</p>
                 <div class="w-full max-w-72"><img v-if="isManualPayment && qrImageUrl" :src="qrImageUrl" alt="支付宝收款码" class="mx-auto max-h-96 w-full object-contain" @error="error = '收款码图片加载失败，请刷新页面或联系商家。'" /><PaymentQrCode v-else-if="qrCode" :value="qrCode" /><p v-else class="py-16 text-sm text-muted-foreground">正在准备收款二维码...</p></div>
-                <template v-if="isManualPayment"><p class="text-sm">请支付 ¥{{ order.amount }}，付款时备注订单号：<span class="break-all font-mono">{{ order.orderNo }}</span></p><p class="text-sm text-muted-foreground">付款后请联系商家核实到账。商家确认收款后，页面会自动更新，请勿重复付款。</p></template>
+                <template v-if="isManualPayment"><p class="text-sm">请支付 ¥{{ order.amount }}，付款时备注订单号：<span class="break-all font-mono">{{ order.orderNo }}</span></p><p class="text-sm text-muted-foreground">付款后请点击下方“我已完成付款”并提交凭证。核实到账后页面会自动更新，请勿重复付款。</p></template>
                 <p v-else class="text-xs text-muted-foreground">支付完成后，页面会自动更新订单状态。</p>
               </template>
-              <p v-else class="text-sm text-muted-foreground">该订单不使用站内扫码支付，请返回订单页面继续支付。</p>
+              <p v-else-if="!isQrPaymentOrder(order)" class="text-sm text-muted-foreground">该订单不使用站内扫码支付，请返回订单页面继续支付。</p>
+              <PaymentProofForm v-if="isManualPayment" :key="order.orderNo" :order-no="order.orderNo" :email="guestEmail" :proof="order.paymentProof" :disabled="cancellingPayment" @busy="proofBusy = $event" @submitted="proofSubmitted = true; refreshOrder()" />
             </div>
             <Alert v-else><AlertTitle>{{ order.paymentStatus === "PAID" ? "支付成功" : "订单已结束" }}</AlertTitle><AlertDescription>{{ order.paymentStatus === "PAID" ? "支付已确认，可返回订单查看发货进度。" : "该订单当前无法继续支付。" }}</AlertDescription></Alert>
           </template>
           <p v-else class="py-16 text-center text-sm text-muted-foreground">正在加载订单...</p>
         </CardContent>
         <CardFooter v-if="order" class="flex-wrap items-end justify-end gap-3 border-t pt-5">
-          <OrderPaymentControls v-if="order.status === 'PENDING' && order.paymentStatus === 'UNPAID'" :order-no="order.orderNo" :created-at="order.createdAt" :email="guestEmail" :disabled="resuming" @busy="cancellingPayment = $event" @cancelled="refreshOrder" />
+          <OrderPaymentControls v-if="order.status === 'PENDING' && order.paymentStatus === 'UNPAID'" :order-no="order.orderNo" :created-at="order.createdAt" :email="guestEmail" :disabled="resuming || proofBusy" :proof-submitted="Boolean(order.paymentProof) || proofSubmitted" @busy="cancellingPayment = $event" @cancelled="refreshOrder" />
           <Button v-if="order.status === 'PENDING' && order.paymentStatus === 'UNPAID' && isQrPaymentOrder(order) && !isManualPayment" variant="outline" :disabled="resuming || cancellingPayment" @click="resumePayment">{{ resuming ? "正在生成..." : "重新生成二维码" }}</Button>
           <Button as-child><a :href="orderHref">查看订单</a></Button>
         </CardFooter>
@@ -53,6 +54,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { isManualAlipayOrder } from "@/lib/alipay-manual";
+import PaymentProofForm from "@/components/storefront/PaymentProofForm.vue";
 import OrderPaymentControls from "@/components/storefront/OrderPaymentControls.vue";
 import PaymentQrCode from "@/components/PaymentQrCode.vue";
 import PublicNav from "@/components/storefront/PublicNav.vue";
@@ -78,6 +80,8 @@ const payableAmount = ref<number | null>(null);
 const error = ref<string | null>(null);
 const resuming = ref(false);
 const cancellingPayment = ref(false);
+const proofBusy = ref(false);
+const proofSubmitted = ref(false);
 const orderHref = computed(() => `${guestEmail.value ? "/order" : "/account/order"}${orderNo ? `?orderNo=${encodeURIComponent(orderNo)}` : ""}`);
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -99,7 +103,7 @@ async function loadOrder() {
       try { qrCode.value = sessionStorage.getItem(`payment-qr:${record.orderNo}`) ?? ""; } catch { qrCode.value = ""; }
       try { const stored = Number(sessionStorage.getItem(`payment-payable:${record.orderNo}`)); payableAmount.value = Number.isSafeInteger(stored) && stored > 0 ? stored : null; } catch { payableAmount.value = null; }
       if (isManualPayment.value) { qrCode.value = ""; payableAmount.value = null; }
-      if (!qrCode.value) await resumePayment();
+      if (!qrCode.value && !record.paymentProof) await resumePayment();
       startPolling();
     }
   } catch (cause) { error.value = userErrorMessage(cause); }
@@ -125,7 +129,7 @@ async function resumePayment() {
     error.value = "暂时无法生成支付二维码，请稍后再试。";
   } catch (cause) { error.value = userErrorMessage(cause, "暂时无法生成支付二维码，请稍后再试。"); } finally { resuming.value = false; }
 }
-function paymentStatusLabel(status: PublicOrder["paymentStatus"]) { return { UNPAID: "待支付", PAID: "已支付", FAILED: "支付失败" }[status]; }
+function paymentStatusLabel(status: PublicOrder["paymentStatus"]) { if (status === "UNPAID" && order.value?.status === "PENDING" && (order.value.paymentProof || proofSubmitted.value)) return "等待核实"; return { UNPAID: "待支付", PAID: "已支付", FAILED: "支付失败" }[status]; }
 function isQrPaymentOrder(record: PublicOrder) { return isManualAlipayOrder(record) || record.paymentProvider === "PERPAY" || (record.paymentProvider === "ALIPAY" && record.paymentChannel === "face_to_face"); }
 function isPerpayQrPaymentOrder(record: PublicOrder) { return record.paymentProvider === "PERPAY"; }
 </script>

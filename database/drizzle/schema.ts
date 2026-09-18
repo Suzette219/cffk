@@ -372,6 +372,17 @@ export const paymentProvider = sqliteTable(
   ],
 );
 
+// Private payment evidence; never expose screenshots through public media URLs.
+export const orderPaymentProof = sqliteTable("orderPaymentProof", {
+  orderId: integer("orderId").primaryKey().references(() => order.id, { onDelete: "cascade" }),
+  transactionNo: text("transactionNo"),
+  screenshot: text("screenshot"),
+  createdAt,
+}, (table) => [
+  uniqueIndex("orderPaymentProof_transactionNo_unique").on(table.transactionNo),
+  check("orderPaymentProof_evidence_required", sql`${table.transactionNo} IS NOT NULL OR ${table.screenshot} IS NOT NULL`),
+]);
+
 export const paymentLog = sqliteTable(
   "paymentLog",
   {
@@ -686,6 +697,7 @@ export const schema = {
   transactionGuard,
   paymentProvider,
   paymentLog,
+  orderPaymentProof,
   pushChannelConfig,
   orderRequestRateLimit,
   guestOrderRecoveryChallenge,

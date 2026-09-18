@@ -250,6 +250,11 @@ export const errorMessages: Record<string, string> = {
   supplier_purchase_failed: "供应商采购失败，请稍后重试。",
   supplier_order_input_invalid: "供应商订单操作参数无效。",
 
+  PAYMENT_PROOF_REQUIRED: "请填写支付宝交易订单号，或上传付款成功截图，至少提供一项。",
+  PAYMENT_PROOF_TRANSACTION_INVALID: "请填写支付宝账单详情中的交易订单号（20–64 位数字），不是商城订单号。",
+  PAYMENT_PROOF_IMAGE_INVALID: "付款截图无效或过大，请重新选择图片。",
+  PAYMENT_PROOF_TRANSACTION_USED: "该支付宝交易订单号已用于其他订单，请核对后重试。",
+  PAYMENT_PROOF_ORDER_EXPIRED: "订单已超时或状态已变更，无法提交凭证。如已付款，请联系商家核实。",
   ORDER_NOT_FOUND: "订单不存在或查询凭证无效。",
   ORDER_QUERY_RATE_LIMITED: "操作过于频繁，请稍后再试。",
   ORDER_NOT_PAID: "订单尚未支付，暂时不能发货。",

@@ -31,7 +31,7 @@
                 <JsonFormFields :fields="activeFields" :values="form.values" :configured-secrets="form.configuredSecrets" :errors="fieldErrors" @update:values="form.values = $event" /><PaymentUrlFields v-if="!manualOnly" :provider="editing.provider" :show-notify="hasNotifyUrl" :notify-url="urlValue('notifyUrl')" :return-url="urlValue('returnUrl')" :site-url="editing.siteUrl" :errors="fieldErrors" @update:notify-url="form.values.notifyUrl = $event" @update:return-url="form.values.returnUrl = $event" /><div v-if="hasManualMode" class="flex flex-col items-start gap-3">
                   <Button type="button" variant="outline" @click="form.values.collectionQrImage = DEFAULT_ALIPAY_COLLECTION_IMAGE">使用内置收款码</Button>
                   <img v-if="qrPreviewUrl" :key="qrPreviewUrl" :src="qrPreviewUrl" alt="支付宝收款码预览" class="max-h-72 max-w-72 rounded-md border object-contain" />
-                  <p class="text-sm text-muted-foreground">买家扫码后，请核对支付宝实际到账金额，再到订单管理点击“确认收款”。请在下单后 30 分钟内核实收款；超时未确认的订单会自动关闭。</p>
+                  <p class="text-sm text-muted-foreground">买家扫码后可提交支付宝交易订单号或付款截图，请到订单管理查看凭证并核实实际到账后确认收款。未提交凭证的订单在 30 分钟后自动关闭；已提交凭证的订单等待核实，不会自动关闭。</p>
                 </div>
               </div>
             </FieldSet>

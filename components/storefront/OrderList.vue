@@ -23,7 +23,8 @@
                 <Badge v-if="item.status" class="shrink-0" :variant="statusVariant?.(item.status)">{{ statusLabel?.(item.status) }}</Badge>
               </span>
               <span class="mt-1 block break-all font-mono text-[11px] leading-4 text-muted-foreground">{{ item.orderNo }}</span>
-              <OrderPaymentCountdown v-if="item.status === 'PENDING'" :created-at="item.createdAt" compact class="mt-1" @refresh="emit('refresh')" />
+              <span v-if="item.status === 'PENDING' && item.paymentProofSubmitted" class="mt-1 block text-xs text-muted-foreground">付款凭证已提交，等待核实</span>
+              <OrderPaymentCountdown v-else-if="item.status === 'PENDING'" :created-at="item.createdAt" compact class="mt-1" @refresh="emit('refresh')" />
             </span>
             <span class="text-right text-xs text-muted-foreground">¥{{ item.amount }}<br>{{ formatDate(item.createdAt) }}</span>
           </button>
@@ -49,6 +50,7 @@ export type OrderListItem = {
   amount: string;
   createdAt: string | Date;
   status?: string;
+  paymentProofSubmitted?: boolean;
 };
 
 export type OrderListGroup = {

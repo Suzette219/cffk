@@ -24,7 +24,7 @@
       <template #cell-payment="{ row }"><Badge :variant="row.paymentStatus === 'PAID' ? 'default' : 'secondary'">{{ paymentLabel(row.paymentStatus) }}</Badge></template>
       <template #cell-delivery="{ row }"><Badge :variant="row.deliveryStatus === 'FAILED' ? 'destructive' : row.deliveryStatus === 'DELIVERED' ? 'default' : 'secondary'">{{ deliveryLabel(row.deliveryStatus) }}</Badge></template>
       <template #cell-createdAt="{ row }"><span class="whitespace-nowrap text-xs">{{ formatDate(row.createdAt) }}</span></template>
-      <template #actions="{ row }"><Button v-if="isManualAlipayOrder(row) && row.status === 'PENDING' && row.paymentStatus === 'UNPAID'" variant="outline" size="sm" @click="manualPaymentOrder = row">确认收款</Button><Button variant="ghost" size="sm" @click="showDetail(row.id)">查看</Button><Button v-if="row.status === 'PENDING'" variant="ghost" size="sm" @click="closeOrder(row.id)">关闭</Button><Button v-if="row.paymentStatus === 'PAID' && row.deliveryStatus !== 'DELIVERED'" variant="ghost" size="sm" @click="row.deliveryType === 'SUPPLIER' ? retrySupplierOrder(row.id) : openDelivery(row.id)">{{ row.deliveryType === 'SUPPLIER' ? '重试供应商发货' : '处理发货' }}</Button></template>
+      <template #actions="{ row }"><Button v-if="isManualAlipayOrder(row) && row.status === 'PENDING' && row.paymentStatus === 'UNPAID'" variant="outline" size="sm" @click="openManualPayment(row)">{{ row.paymentProofSubmitted ? "核实付款凭证" : "确认收款" }}</Button><Button variant="ghost" size="sm" @click="showDetail(row.id)">查看</Button><Button v-if="row.status === 'PENDING'" variant="ghost" size="sm" @click="closeOrder(row.id)">关闭</Button><Button v-if="row.paymentStatus === 'PAID' && row.deliveryStatus !== 'DELIVERED'" variant="ghost" size="sm" @click="row.deliveryType === 'SUPPLIER' ? retrySupplierOrder(row.id) : openDelivery(row.id)">{{ row.deliveryType === 'SUPPLIER' ? '重试供应商发货' : '处理发货' }}</Button></template>
       <template #pagination><Pagination :total="total" :page="page" :page-size="pageSize" :page-size-options="[10, 20, 50, 100]" @update:page="changePage" @update:page-size="changePageSize" /></template>
     </AdminDataTable>
 
@@ -46,6 +46,7 @@
         <div v-if="detail" class="@container min-h-0 overflow-y-auto bg-muted/20 p-4 sm:p-6">
           <div class="grid items-start gap-4 @3xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,1fr)] @3xl:gap-6">
             <div class="grid min-w-0 gap-4">
+              <Card v-if="detail.paymentProof" class="gap-0 py-0"><CardHeader class="border-b px-4 py-4 sm:px-5"><CardTitle class="text-sm">付款凭证</CardTitle></CardHeader><CardContent class="p-4 sm:p-5"><PaymentProofDetails :proof="detail.paymentProof" /></CardContent></Card>
               <Card class="gap-0 py-0">
                 <CardHeader class="border-b px-4 py-4 sm:px-5">
                   <CardTitle class="text-sm">订单信息</CardTitle>
@@ -154,10 +155,12 @@
       </DialogContent>
     </Dialog>
     <Dialog :open="!!manualPaymentOrder" @update:open="!$event && !confirmingPayment && (manualPaymentOrder = null)">
-      <DialogContent @interact-outside.prevent @escape-key-down.prevent>
+      <DialogContent class="max-h-[90dvh] overflow-y-auto" @interact-outside.prevent @escape-key-down.prevent>
         <DialogHeader><DialogTitle>确认支付宝收款</DialogTitle><DialogDescription>请先在支付宝账单中核实实际到账。确认后将按商品设置开始发货。</DialogDescription></DialogHeader>
         <div v-if="manualPaymentOrder" class="flex flex-col gap-2 text-sm"><p class="break-all">订单号：{{ manualPaymentOrder.orderNo }}</p><p>应到账金额：¥{{ manualPaymentOrder.amount }}</p><p>请核对金额及订单备注，避免将其他买家的付款记入本订单。</p></div>
-        <DialogFooter><Button variant="outline" :disabled="confirmingPayment" @click="manualPaymentOrder = null">取消</Button><Button :disabled="confirmingPayment" @click="confirmManualPayment">{{ confirmingPayment ? "正在确认..." : "已核实到账，确认收款" }}</Button></DialogFooter>
+        <p v-if="loadingProof" class="text-sm text-muted-foreground">正在加载付款凭证...</p>
+        <PaymentProofDetails v-else :proof="manualProof" />
+        <DialogFooter><Button variant="outline" :disabled="confirmingPayment" @click="manualPaymentOrder = null">取消</Button><Button :disabled="confirmingPayment || loadingProof" @click="confirmManualPayment">{{ confirmingPayment ? "正在确认..." : "已核实到账，确认收款" }}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   </section>
@@ -166,6 +169,7 @@
 <script lang="ts" setup>
 import { computed, onMounted, reactive, ref } from "vue";
 import AdminDataTable, { type AdminTableColumn } from "@/components/admin/AdminDataTable.vue";
+import PaymentProofDetails from "@/components/admin/PaymentProofDetails.vue";
 import AdminPageHeader from "@/components/admin/AdminPageHeader.vue";
 
 import { Badge } from "@/components/ui/badge";
@@ -187,9 +191,22 @@ type Order = Awaited<ReturnType<typeof onGetAdminOrders>>["orders"][number];
 const timezone = useSiteTimezone();
 const manualPaymentOrder = ref<Order | null>(null);
 const confirmingPayment = ref(false);
+const loadingProof = ref(false);
+const manualProof = ref<Awaited<ReturnType<typeof onGetAdminOrderDetail>>["paymentProof"]>(null);
+async function openManualPayment(record: Order) {
+  if (loadingProof.value || confirmingPayment.value) return;
+  manualProof.value = null;
+  manualPaymentOrder.value = record;
+  loadingProof.value = true;
+  try {
+    const result = await runTelefunc(() => onGetAdminOrderDetail({ orderId: record.id }));
+    if (manualPaymentOrder.value?.id === record.id) manualProof.value = result.paymentProof;
+  } catch { manualPaymentOrder.value = null; }
+  finally { loadingProof.value = false; }
+}
 async function confirmManualPayment() {
   const record = manualPaymentOrder.value;
-  if (!record || confirmingPayment.value) return;
+  if (!record || confirmingPayment.value || loadingProof.value) return;
   confirmingPayment.value = true;
   try {
     await runTelefunc(() => onConfirmManualPayment({ orderId: record.id, receivedAmount: record.amount }), { successMessage: "收款已确认，请查看订单发货状态。" });

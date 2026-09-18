@@ -199,3 +199,98 @@ test("cancellation reconciles API payments and refuses to close on query failure
     assert.equal((context.sqlite.query("SELECT paymentStatus FROM `order` WHERE orderNo = ?").get(created.orderNo) as { paymentStatus: string }).paymentStatus, "PAID");
   } finally { definition.createAdapter = originalAdapter; context.close(); }
 });
+
+test("payment proof requires evidence, belongs to the buyer, and never confirms payment", async () => {
+  const { submitPaymentProof } = await import("../../server/order/payment-proof");
+  const context = fixture();
+  try {
+    const created = await context.flow.create(input, null);
+    const proof = { orderNo: created.orderNo, email: input.contactValue, transactionNo: "2026091822001234567890123456" };
+    await assert.rejects(() => submitPaymentProof(context.database, { ...proof, email: "stranger@example.com" }, null), /ORDER_NOT_FOUND/);
+    await assert.rejects(() => submitPaymentProof(context.database, { ...proof, transactionNo: "" }, null), /PAYMENT_PROOF_REQUIRED/);
+    await assert.rejects(() => submitPaymentProof(context.database, { ...proof, transactionNo: created.orderNo }, null), /PAYMENT_PROOF_TRANSACTION_INVALID/);
+    await submitPaymentProof(context.database, proof, null);
+    const record = await context.flow.query(created.orderNo, null, input.contactValue);
+    assert.equal(record?.paymentProof?.transactionNo, proof.transactionNo);
+    assert.equal(record?.paymentProof?.hasScreenshot, false);
+    assert.equal(record?.paymentStatus, "UNPAID");
+    assert.equal(record?.status, "PENDING");
+    assert.deepEqual(record?.deliveries, []);
+    await submitPaymentProof(context.database, { ...proof, transactionNo: "2026091822001234567890123457" }, null);
+    assert.equal((await context.flow.query(created.orderNo, null, input.contactValue))?.paymentProof?.transactionNo, proof.transactionNo);
+    const second = await context.flow.create(input, null);
+    await assert.rejects(() => submitPaymentProof(context.database, { ...proof, orderNo: second.orderNo }, null), /PAYMENT_PROOF_TRANSACTION_USED/);
+    const id = (context.sqlite.query("SELECT id FROM `order` WHERE orderNo = ?").get(created.orderNo) as { id: number }).id;
+    await context.flow.confirmManual(id, "10.00", "admin");
+    assert.equal((await context.flow.query(created.orderNo, null, input.contactValue))?.paymentStatus, "PAID");
+  } finally { context.sqlite.close(); }
+});
+
+test("pending proof protects reserved stock from automatic and buyer cancellation but allows admin closure", async () => {
+  const { submitPaymentProof } = await import("../../server/order/payment-proof");
+  const context = fixture();
+  try {
+    context.sqlite.query("UPDATE productSku SET deliveryType = 'MANUAL', physicalStock = 9").run();
+    const created = await context.flow.create(input, null);
+    await submitPaymentProof(context.database, { orderNo: created.orderNo, email: input.contactValue, transactionNo: "2026091822001234567890123456" }, null);
+    const id = (context.sqlite.query("SELECT id FROM `order` WHERE orderNo = ?").get(created.orderNo) as { id: number }).id;
+    context.sqlite.query("UPDATE `order` SET createdAt = ? WHERE id = ?").run(Date.now() - ORDER_PAYMENT_TIMEOUT_MS - 1000, id);
+    assert.equal((await closeExpiredPendingOrders(context.database, new Date(Date.now() - ORDER_PAYMENT_TIMEOUT_MS))).scanned, 0);
+    assert.equal((await closePendingOrder(context.database, id, "AUTO_CLOSE")).closed, false);
+    await assert.rejects(() => context.flow.cancel(created.orderNo, null, input.contactValue), /ORDER_CANNOT_CANCEL/);
+    assert.equal((context.sqlite.query("SELECT physicalStock FROM productSku WHERE id = 1").get() as { physicalStock: number }).physicalStock, 8);
+    assert.equal((await closePendingOrder(context.database, id, "ADMIN_CLOSE")).closed, true);
+    assert.equal((context.sqlite.query("SELECT physicalStock FROM productSku WHERE id = 1").get() as { physicalStock: number }).physicalStock, 9);
+  } finally { context.sqlite.close(); }
+});
+
+test("proof rejects expired, closed, paid and non-manual orders", async () => {
+  const { submitPaymentProof } = await import("../../server/order/payment-proof");
+  const context = fixture();
+  try {
+    for (const state of ["expired", "closed", "paid", "api"]) {
+      const created = await context.flow.create(input, null);
+      if (state === "expired") context.sqlite.query("UPDATE `order` SET createdAt = ? WHERE orderNo = ?").run(Date.now() - ORDER_PAYMENT_TIMEOUT_MS, created.orderNo);
+      if (state === "closed") context.sqlite.query("UPDATE `order` SET status = 'CLOSED' WHERE orderNo = ?").run(created.orderNo);
+      if (state === "paid") context.sqlite.query("UPDATE `order` SET paymentStatus = 'PAID' WHERE orderNo = ?").run(created.orderNo);
+      if (state === "api") context.sqlite.query("UPDATE `order` SET paymentChannel = 'web' WHERE orderNo = ?").run(created.orderNo);
+      await assert.rejects(() => submitPaymentProof(context.database, { orderNo: created.orderNo, email: input.contactValue, transactionNo: "2026091822001234567890123456" }, null), state === "api" ? /PAYMENT_CHANNEL_INVALID/ : /PAYMENT_PROOF_ORDER_EXPIRED/);
+    }
+    assert.equal((context.sqlite.query("SELECT count(*) AS n FROM orderPaymentProof").get() as { n: number }).n, 0);
+  } finally { context.sqlite.close(); }
+});
+
+test("screenshot-only evidence stays private and invalid or oversized data is rejected", async () => {
+  const { submitPaymentProof, validatePaymentProof } = await import("../../server/order/payment-proof");
+  const context = fixture();
+  try {
+    const created = await context.flow.create(input, null);
+    const base = { orderNo: created.orderNo, email: input.contactValue };
+    for (const screenshot of ["data:image/svg+xml;base64,PHN2Zz4=", "https://example.com/a.jpg", "data:image/jpeg;base64,YWJjZA==", "data:image/jpeg;base64," + "a".repeat(300_000)]) {
+      assert.throws(() => validatePaymentProof({ ...base, screenshot }), /PAYMENT_PROOF_IMAGE_INVALID/);
+    }
+    // JPEG envelope fixture; contents are displayed only as an inert image to the admin.
+    const screenshot = "data:image/jpeg;base64," + btoa(String.fromCharCode(255, 216, 255, 224, 0, 16, 255, 217));
+    await submitPaymentProof(context.database, { ...base, screenshot }, null);
+    const publicOrder = await context.flow.query(created.orderNo, null, input.contactValue);
+    assert.equal(publicOrder?.paymentProof?.hasScreenshot, true);
+    assert.equal(publicOrder?.paymentProof?.transactionNo, null);
+    assert.ok(!JSON.stringify(publicOrder).includes(screenshot));
+    assert.equal((context.sqlite.query("SELECT screenshot FROM orderPaymentProof").get() as { screenshot: string }).screenshot, screenshot);
+  } finally { context.sqlite.close(); }
+});
+
+test("account payment proof cannot be submitted by another account or by knowing its email", async () => {
+  const { submitPaymentProof } = await import("../../server/order/payment-proof");
+  const context = fixture();
+  try {
+    const now = Date.now();
+    context.sqlite.query("INSERT INTO user (id, name, email, emailVerified, twoFactorEnabled, createdAt, updatedAt) VALUES ('owner', 'Owner', ?, 1, 0, ?, ?)").run(input.contactValue, now, now);
+    const created = await context.flow.create(input, "owner");
+    const proof = { orderNo: created.orderNo, transactionNo: "2026091822001234567890123456" };
+    await assert.rejects(() => submitPaymentProof(context.database, proof, "someone-else"), /ORDER_NOT_FOUND/);
+    await assert.rejects(() => submitPaymentProof(context.database, { ...proof, email: input.contactValue }, null), /ORDER_NOT_FOUND/);
+    await submitPaymentProof(context.database, proof, "owner");
+    assert.equal((await context.flow.query(created.orderNo, "owner"))?.paymentProof?.transactionNo, proof.transactionNo);
+  } finally { context.sqlite.close(); }
+});
