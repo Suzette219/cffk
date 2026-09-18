@@ -7,7 +7,8 @@ import { reconcilePendingAlipayPayments } from "./payment/reconciliation-service
 import { processPendingSupplierOrders } from "./supplier/process";
 import { runSupplierMaintenance } from "./supplier/maintenance";
 
-export const ORDER_PAYMENT_TIMEOUT_MS = 30 * 60 * 1000;
+import { ORDER_PAYMENT_TIMEOUT_MS } from "@/lib/order-state";
+export { ORDER_PAYMENT_TIMEOUT_MS };
 
 export async function runScheduledMaintenance(database: D1Database, runtime: Record<string, unknown>, now = new Date()) {
   const startedAt = now;

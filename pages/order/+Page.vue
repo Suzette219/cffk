@@ -115,8 +115,9 @@
                 <AlertDescription>订单已支付，发货任务正在处理中。</AlertDescription>
               </Alert>
             </CardContent>
-            <CardFooter v-if="result.paymentStatus === 'UNPAID'" class="justify-end border-t pt-5">
-              <Button v-if="isFaceToFacePayment" as-child><a :href="`/checkout?orderNo=${encodeURIComponent(result.orderNo)}`">前往支付</a></Button><Button v-else :disabled="resumingPayment" @click="resumePayment">{{ resumingPayment ? "正在生成支付信息..." : "继续支付" }}</Button>
+            <CardFooter v-if="result.status === 'PENDING' && result.paymentStatus === 'UNPAID'" class="flex-wrap items-end justify-end gap-3 border-t pt-5">
+              <OrderPaymentControls :key="result.orderNo" :order-no="result.orderNo" :created-at="result.createdAt" :email="activeQuery?.email" :disabled="resumingPayment" @busy="cancellingPayment = $event" @cancelled="refreshSelectedOrder" @refresh="refreshSelectedOrder" />
+              <Button v-if="isFaceToFacePayment" :disabled="cancellingPayment" as-child><a :href="`/checkout?orderNo=${encodeURIComponent(result.orderNo)}`">前往支付</a></Button><Button v-else :disabled="resumingPayment || cancellingPayment" @click="resumePayment">{{ resumingPayment ? "正在生成支付信息..." : "继续支付" }}</Button>
             </CardFooter>
           </Card>
 
@@ -183,6 +184,8 @@ import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field
 import { Input } from "@/components/ui/input";
 
 import { clearAllLocalOrders, deleteLocalOrdersForEmail, getLocalOrderGroups, replaceLocalOrdersForEmail, type LocalOrder } from "@/lib/local-orders";
+import { orderStatusVariant as statusVariant } from "@/lib/order-state";
+import OrderPaymentControls from "@/components/storefront/OrderPaymentControls.vue";
 import { cacheQrPayment } from "@/lib/payment-utils";
 import { runTelefunc, userErrorMessage } from "@/lib/telefunc-client";
 import { onQueryOrder, onResumeOrderPayment, type PublicOrder } from "@/server/order/public.telefunc";
@@ -199,6 +202,7 @@ const requestedOrderNo = (typeof rawOrderNo === "string" ? rawOrderNo : "").trim
 const result = ref<PublicOrder | null>(null);
 const error = ref<string | null>(null);
 const resumingPayment = ref(false);
+const cancellingPayment = ref(false);
 const guestGroups = ref<GuestGroup[]>([]);
 const orderSidebar = ref<HTMLElement | null>(null);
 const sidebarHeight = ref<number | null>(null);
@@ -364,6 +368,15 @@ async function queryOrder(input: { orderNo: string; email?: string }) {
 }
 
 
+async function refreshSelectedOrder() {
+  const input = activeQuery.value;
+  if (!input) return;
+  try {
+    const record = await runTelefunc(() => onQueryOrder(input), { notifyError: false });
+    if (record && result.value?.orderNo === input.orderNo) result.value = record;
+  } catch { /* Retry on the next refresh. */ }
+}
+
 async function resumePayment() {
   if (!result.value || resumingPayment.value || !activeQuery.value) return;
   resumingPayment.value = true;
@@ -390,5 +403,5 @@ async function resumePayment() {
 function statusLabel(status: PublicOrder["status"]) { return { PENDING: "待支付", PAID: "已支付", DELIVERED: "已发货", CLOSED: "已关闭", FAILED: "失败" }[status]; }
 function paymentStatusLabel(status: PublicOrder["paymentStatus"]) { return { UNPAID: "待支付", PAID: "已支付", FAILED: "支付失败" }[status]; }
 function deliveryStatusLabel(status: PublicOrder["deliveryStatus"]) { return { NOT_DELIVERED: "未发货", DELIVERING: "发货中", DELIVERED: "已发货", FAILED: "发货失败" }[status]; }
-function statusVariant(status: PublicOrder["status"]) { return status === "DELIVERED" || status === "PAID" ? "secondary" : status === "FAILED" ? "destructive" : "outline"; }
+
 </script>

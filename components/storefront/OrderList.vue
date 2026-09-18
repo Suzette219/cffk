@@ -23,6 +23,7 @@
                 <Badge v-if="item.status" class="shrink-0" :variant="statusVariant?.(item.status)">{{ statusLabel?.(item.status) }}</Badge>
               </span>
               <span class="mt-1 block break-all font-mono text-[11px] leading-4 text-muted-foreground">{{ item.orderNo }}</span>
+              <OrderPaymentCountdown v-if="item.status === 'PENDING'" :created-at="item.createdAt" compact class="mt-1" @refresh="emit('refresh')" />
             </span>
             <span class="text-right text-xs text-muted-foreground">¥{{ item.amount }}<br>{{ formatDate(item.createdAt) }}</span>
           </button>
@@ -35,7 +36,8 @@
 </template>
 
 <script setup lang="ts">
-import { Badge } from "@/components/ui/badge";
+import OrderPaymentCountdown from "./OrderPaymentCountdown.vue";
+import { Badge, type BadgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -55,12 +57,14 @@ export type OrderListGroup = {
   orders: OrderListItem[];
 };
 
+const emit = defineEmits<{ refresh: [] }>();
+
 defineProps<{
   groups: OrderListGroup[];
   onSelect: (item: OrderListItem, groupKey: string) => void;
   onDeleteGroup?: (groupKey: string) => void;
   statusLabel?: (status: string) => string;
-  statusVariant?: (status: string) => "default" | "secondary" | "destructive" | "outline";
+  statusVariant?: (status: string) => BadgeVariants["variant"];
 }>();
 
 function formatDate(value: string | Date) {

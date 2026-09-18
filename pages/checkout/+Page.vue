@@ -22,7 +22,7 @@
               <div v-if="payableAmount !== null"><dt class="text-xs text-muted-foreground">扫码支付</dt><dd class="mt-1 font-medium">¥{{ formatCentsAsYuan(payableAmount) }}</dd></div>
               <div><dt class="text-xs text-muted-foreground">支付状态</dt><dd class="mt-1 font-medium">{{ paymentStatusLabel(order.paymentStatus) }}</dd></div>
             </dl>
-            <div v-if="order.paymentStatus === 'UNPAID'" class="grid justify-items-center gap-4 border-t pt-6 text-center">
+            <div v-if="order.status === 'PENDING' && order.paymentStatus === 'UNPAID'" class="grid justify-items-center gap-4 border-t pt-6 text-center">
               <template v-if="isQrPaymentOrder(order)">
                 <div v-if="isPerpayQrPaymentOrder(order) && payableAmount !== null" class="w-full rounded-xl border-2 border-primary/35 px-5 py-4 text-center shadow-sm" aria-live="polite">
                   <p class="mt-1 text-4xl font-bold tracking-tight text-primary sm:text-5xl"><span class="text-2xl sm:text-3xl">¥</span>{{ formatCentsAsYuan(payableAmount) }}</p>
@@ -39,8 +39,9 @@
           </template>
           <p v-else class="py-16 text-center text-sm text-muted-foreground">正在加载订单...</p>
         </CardContent>
-        <CardFooter v-if="order" class="justify-end gap-3 border-t pt-5">
-          <Button v-if="order.paymentStatus === 'UNPAID' && isQrPaymentOrder(order) && !isManualPayment" variant="outline" :disabled="resuming" @click="resumePayment">{{ resuming ? "正在生成..." : "重新生成二维码" }}</Button>
+        <CardFooter v-if="order" class="flex-wrap items-end justify-end gap-3 border-t pt-5">
+          <OrderPaymentControls v-if="order.status === 'PENDING' && order.paymentStatus === 'UNPAID'" :order-no="order.orderNo" :created-at="order.createdAt" :email="guestEmail" :disabled="resuming" @busy="cancellingPayment = $event" @cancelled="refreshOrder" />
+          <Button v-if="order.status === 'PENDING' && order.paymentStatus === 'UNPAID' && isQrPaymentOrder(order) && !isManualPayment" variant="outline" :disabled="resuming || cancellingPayment" @click="resumePayment">{{ resuming ? "正在生成..." : "重新生成二维码" }}</Button>
           <Button as-child><a :href="orderHref">查看订单</a></Button>
         </CardFooter>
       </Card>
@@ -52,6 +53,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { isManualAlipayOrder } from "@/lib/alipay-manual";
+import OrderPaymentControls from "@/components/storefront/OrderPaymentControls.vue";
 import PaymentQrCode from "@/components/PaymentQrCode.vue";
 import PublicNav from "@/components/storefront/PublicNav.vue";
 import StorefrontBrand from "@/components/storefront/StorefrontBrand.vue";
@@ -75,6 +77,7 @@ const isManualPayment = computed(() => !!order.value && isManualAlipayOrder(orde
 const payableAmount = ref<number | null>(null);
 const error = ref<string | null>(null);
 const resuming = ref(false);
+const cancellingPayment = ref(false);
 const orderHref = computed(() => `${guestEmail.value ? "/order" : "/account/order"}${orderNo ? `?orderNo=${encodeURIComponent(orderNo)}` : ""}`);
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -92,7 +95,7 @@ async function loadOrder() {
     const record = await runTelefunc(() => onQueryOrder(queryInput()), { notifyError: false });
     if (!record) { error.value = guestEmail.value ? "订单不存在，或下单邮箱不匹配。" : "未找到当前账户下的该订单。"; return; }
     order.value = record;
-    if (record.paymentStatus === "UNPAID" && isQrPaymentOrder(record)) {
+    if (record.status === "PENDING" && record.paymentStatus === "UNPAID" && isQrPaymentOrder(record)) {
       try { qrCode.value = sessionStorage.getItem(`payment-qr:${record.orderNo}`) ?? ""; } catch { qrCode.value = ""; }
       try { const stored = Number(sessionStorage.getItem(`payment-payable:${record.orderNo}`)); payableAmount.value = Number.isSafeInteger(stored) && stored > 0 ? stored : null; } catch { payableAmount.value = null; }
       if (isManualPayment.value) { qrCode.value = ""; payableAmount.value = null; }
@@ -101,7 +104,7 @@ async function loadOrder() {
     }
   } catch (cause) { error.value = userErrorMessage(cause); }
 }
-function startPolling() { stopPolling(); pollTimer = setInterval(() => { void refreshOrder(); }, 5000); }
+function startPolling() { stopPolling(); pollTimer = setInterval(() => { void refreshOrder(); }, guestEmail.value ? 10_000 : 5000); }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined; } }
 async function refreshOrder() {
   if (!order.value || order.value.paymentStatus !== "UNPAID") return;
@@ -109,7 +112,7 @@ async function refreshOrder() {
     const record = await runTelefunc(() => onQueryOrder(queryInput()), { notifyError: false });
     if (!record) return;
     order.value = record;
-    if (record.paymentStatus !== "UNPAID") { stopPolling(); qrCode.value = ""; payableAmount.value = null; try { sessionStorage.removeItem(`payment-qr:${record.orderNo}`); sessionStorage.removeItem(`payment-payable:${record.orderNo}`); } catch { /* Session storage is optional. */ } }
+    if (record.status !== "PENDING" || record.paymentStatus !== "UNPAID") { stopPolling(); qrCode.value = ""; payableAmount.value = null; try { sessionStorage.removeItem(`payment-qr:${record.orderNo}`); sessionStorage.removeItem(`payment-payable:${record.orderNo}`); } catch { /* Session storage is optional. */ } }
   } catch { /* The next poll retries. */ }
 }
 async function resumePayment() {

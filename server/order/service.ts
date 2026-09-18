@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { createDrizzleDb } from "@/database/drizzle";
 import { automaticDeliveryJob, customerAddress, discountCode, order, orderDelivery, productV2, productSku, supplierOrder } from "@/database/drizzle/schema";
 import { getProductSku } from "@/server/catalog/sku";
@@ -405,15 +405,15 @@ export async function closeExpiredPendingOrders(database: D1Database, cutoff: Da
   const records = await db.select({ id: order.id }).from(order).where(and(
     eq(order.status, "PENDING"),
     eq(order.paymentStatus, "UNPAID"),
-    lt(order.createdAt, cutoff),
-    or(sql`${order.paymentProvider} != 'ALIPAY'`, closeableAlipayOrderIds.length ? inArray(order.id, closeableAlipayOrderIds) : sql`0 = 1`),
-  )).limit(limit);
+    lte(order.createdAt, cutoff),
+    or(sql`${order.paymentProvider} != 'ALIPAY'`, eq(order.paymentChannel, "manual"), closeableAlipayOrderIds.length ? inArray(order.id, closeableAlipayOrderIds) : sql`0 = 1`),
+  )).orderBy(asc(order.createdAt), asc(order.id)).limit(limit);
   let closed = 0;
-  for (const record of records) if ((await closePendingOrder(database, record.id)).closed) closed += 1;
+  for (const record of records) if ((await closePendingOrder(database, record.id, "AUTO_CLOSE")).closed) closed += 1;
   return { scanned: records.length, closed };
 }
 
-export async function closePendingOrder(database: D1Database, orderId: number): Promise<{ closed: boolean }> {
+export async function closePendingOrder(database: D1Database, orderId: number, reason: "AUTO_CLOSE" | "USER_CANCEL" | "ADMIN_CLOSE" | "SYSTEM_CLOSE" = "SYSTEM_CLOSE"): Promise<{ closed: boolean }> {
   const db = createDrizzleDb(database);
   const [record] = await db.select({ orderNo: order.orderNo, productId: order.productId, productSkuId: order.productSkuId, quantity: order.quantity, paymentProvider: order.paymentProvider, discountCodeId: order.discountCodeId, physicalStockReserved: order.physicalStockReserved }).from(order).where(eq(order.id, orderId)).limit(1);
   if (!record) fail("ORDER_NOT_FOUND");
@@ -432,6 +432,6 @@ export async function closePendingOrder(database: D1Database, orderId: number): 
   } catch {
     return { closed: false };
   }
-  await new PaymentLogService(database).writeBestEffort({ orderId, provider: record.paymentProvider as PaymentProviderKind, orderNo: record.orderNo, eventType: "AUTO_CLOSE", verifyStatus: "PENDING", message: "订单超时未支付，已自动关闭（30分钟）", payload: {} });
+  await new PaymentLogService(database).writeBestEffort({ orderId, provider: record.paymentProvider as PaymentProviderKind, orderNo: record.orderNo, eventType: reason, verifyStatus: "PENDING", message: { AUTO_CLOSE: "订单超时未支付，已自动关闭（30分钟）", USER_CANCEL: "买家主动取消订单", ADMIN_CLOSE: "管理员关闭订单", SYSTEM_CLOSE: "系统关闭未支付订单" }[reason], payload: {} });
   return { closed: true };
 }

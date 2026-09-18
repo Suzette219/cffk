@@ -1,4 +1,5 @@
 export default {
+  orderPayment: { "countdown": "{minutes} 分 {seconds} 秒","cancel": "取消订单", "title": "确认取消订单？", "description": "取消后订单无法继续支付。如已付款，请勿取消，请联系商家核实到账。", "keep": "保留订单", "confirm": "确认取消", "cancelling": "正在取消...", "cancelled": "订单已取消。", "remaining": "剩余付款时间", "deadline": "付款截止时间", "expired": "付款已超时，等待系统自动关闭", "notice": "下单后 30 分钟未支付，订单将自动关闭。"},
   languageName: "简体中文",
   nav: {
     main: "主导航",
@@ -113,6 +114,10 @@ export default {
     noPaymentMethod: "当前没有可用的支付方式，请稍后再试。",
     contactEmail: "联系邮箱",
     quantity: "购买数量",
+    quantityRange: "每单可购买 {min}–{max} 件",
+    quantityIntegerRequired: "请输入大于 0 的整数购买数量。",
+    quantityBelowMinimum: "每单至少购买 {min} 件，请调整购买数量。",
+    quantityAboveMaximum: "每单最多购买 {max} 件，请调整购买数量。",
     availableStock: "可用库存：{count}",
     shippingAddress: "收货地址",
     selectSavedAddress: "选择已保存地址",

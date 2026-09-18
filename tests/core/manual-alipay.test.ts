@@ -3,6 +3,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 // @ts-expect-error Tests use Bun without its global type package.
 import { test } from "bun:test";
 import { alipayFormFields, DEFAULT_ALIPAY_COLLECTION_IMAGE } from "../../lib/alipay-manual";
+import { ORDER_PAYMENT_TIMEOUT_MS } from "../../lib/order-state";
 import { canonicalizeAlipayParameters } from "../../lib/payment-utils";
 import { getJsonFormErrors } from "../../lib/json-form-values";
 import { mergePaymentProviderConfig, mergePaymentUrls } from "../../server/payment/admin.telefunc";
@@ -74,8 +75,8 @@ test("personal QR purchase resumes, waits for confirmation, and delivers only on
     assert.equal((await flow.resume(created.orderNo, null, input.contactValue)).payment?.qrImageUrl, config.collectionQrImage);
     assert.equal((await flow.query(created.orderNo, null, input.contactValue))?.paymentStatus, "UNPAID");
     assert.equal((await reconcilePendingAlipayPayments(database)).scanned, 0);
-    // Manual orders remain available for reconciliation by the merchant, even after the normal timeout.
-    assert.equal((await closeExpiredPendingOrders(database, new Date(Date.now() + 86400000))).closed, 0);
+    // Newly created orders stay payable until the payment timeout.
+    assert.equal((await closeExpiredPendingOrders(database, new Date(Date.now() - ORDER_PAYMENT_TIMEOUT_MS))).closed, 0);
     for (const source of ["QUERY", "CALLBACK", "SCHEDULED_QUERY", "ZERO_AMOUNT"]) {
       await assert.rejects(() => flow.confirm(created.orderNo, source, 1000), /PAYMENT_MANUAL_CONFIRM_REQUIRED/);
     }
@@ -122,4 +123,79 @@ test("even a correctly signed API callback cannot pay a manual order in mixed mo
     assert.equal((await context.flow.query(created.orderNo, null, input.contactValue))?.paymentStatus, "UNPAID");
     assert.equal((await reconcilePendingAlipayPayments(context.database)).scanned, 0);
   } finally { context.close(); }
+});
+
+
+test("buyer cancellation checks ownership and releases stock and discount reservations once", async () => {
+  const context = fixture();
+  try {
+    context.sqlite.query("UPDATE productSku SET deliveryType = 'MANUAL', physicalStock = 2 WHERE id = 1").run();
+    const now = Date.now();
+    context.sqlite.query("INSERT INTO discountCode (code, type, value, usedCount, reservedCount, isActive, createdAt, updatedAt) VALUES ('CANCEL', 'FIXED', 100, 0, 0, 1, ?, ?)").run(now, now);
+    const created = await context.flow.create({ ...input, discountCode: "CANCEL" }, null);
+    await assert.rejects(() => context.flow.cancel(created.orderNo, null), /ORDER_NOT_FOUND/);
+    await assert.rejects(() => context.flow.cancel(created.orderNo, null, "wrong@example.com"), /ORDER_NOT_FOUND/);
+    assert.equal((context.sqlite.query("SELECT physicalStock FROM productSku WHERE id = 1").get() as { physicalStock: number }).physicalStock, 1);
+    await context.flow.cancel(created.orderNo, null, input.contactValue);
+    await context.flow.cancel(created.orderNo, null, input.contactValue);
+    assert.equal((context.sqlite.query("SELECT physicalStock FROM productSku WHERE id = 1").get() as { physicalStock: number }).physicalStock, 2);
+    assert.deepEqual(context.sqlite.query("SELECT reservedCount, usedCount FROM discountCode WHERE code = 'CANCEL'").get(), { reservedCount: 0, usedCount: 0 });
+    assert.equal((await context.flow.query(created.orderNo, null, input.contactValue))?.status, "CLOSED");
+    await assert.rejects(() => context.flow.resume(created.orderNo, null, input.contactValue), /ORDER_NOT_FOUND/);
+    assert.equal((context.sqlite.query("SELECT COUNT(*) AS total FROM paymentLog WHERE eventType = 'USER_CANCEL'").get() as { total: number }).total, 1);
+  } finally { context.close(); }
+});
+
+test("only the account owner can cancel an account order; paid orders cannot be cancelled", async () => {
+  const context = fixture();
+  try {
+    const now = Date.now();
+    context.sqlite.query("INSERT INTO user (id, name, email, emailVerified, twoFactorEnabled, createdAt, updatedAt) VALUES ('owner', 'Owner', ?, 1, 0, ?, ?)").run(input.contactValue, now, now);
+    const created = await context.flow.create(input, "owner");
+    await assert.rejects(() => context.flow.cancel(created.orderNo, "someone-else"), /ORDER_NOT_FOUND/);
+    await assert.rejects(() => context.flow.cancel(created.orderNo, null, input.contactValue), /ORDER_NOT_FOUND/);
+    await context.flow.cancel(created.orderNo, "owner");
+    const paid = await context.flow.create(input, "owner");
+    const record = context.sqlite.query("SELECT id FROM `order` WHERE orderNo = ?").get(paid.orderNo) as { id: number };
+    await context.flow.confirmManual(record.id, "10.00", "admin-1");
+    await assert.rejects(() => context.flow.cancel(paid.orderNo, "owner"), /ORDER_CANNOT_CANCEL/);
+  } finally { context.close(); }
+});
+
+test("manual orders close at 30 minutes while newer and paid orders stay unchanged", async () => {
+  const context = fixture();
+  try {
+    assert.equal(ORDER_PAYMENT_TIMEOUT_MS, 30 * 60 * 1000);
+    const cutoff = Date.now() - ORDER_PAYMENT_TIMEOUT_MS;
+    const expired = await context.flow.create(input, null);
+    const fresh = await context.flow.create(input, null);
+    const paid = await context.flow.create(input, null);
+    context.sqlite.query("UPDATE `order` SET createdAt = ? WHERE orderNo IN (?, ?)").run(cutoff, expired.orderNo, paid.orderNo);
+    context.sqlite.query("UPDATE `order` SET createdAt = ? WHERE orderNo = ?").run(cutoff + 1, fresh.orderNo);
+    const record = context.sqlite.query("SELECT id FROM `order` WHERE orderNo = ?").get(paid.orderNo) as { id: number };
+    await context.flow.confirmManual(record.id, "10.00", "admin-1");
+    assert.deepEqual(await closeExpiredPendingOrders(context.database, new Date(cutoff)), { scanned: 1, closed: 1 });
+    assert.equal((await context.flow.query(expired.orderNo, null, input.contactValue))?.status, "CLOSED");
+    assert.equal((await context.flow.query(fresh.orderNo, null, input.contactValue))?.status, "PENDING");
+    assert.equal((await context.flow.query(paid.orderNo, null, input.contactValue))?.paymentStatus, "PAID");
+    assert.equal((await closeExpiredPendingOrders(context.database, new Date(cutoff))).closed, 0);
+    assert.deepEqual(context.sqlite.query("SELECT eventType, message FROM paymentLog WHERE eventType = 'AUTO_CLOSE'").get(), { eventType: "AUTO_CLOSE", message: "订单超时未支付，已自动关闭（30分钟）" });
+  } finally { context.close(); }
+});
+
+test("cancellation reconciles API payments and refuses to close on query failures", async () => {
+  const context = fixture();
+  const definition = paymentProviderDefinitions.ALIPAY;
+  const originalAdapter = definition.createAdapter;
+  try {
+    const created = await context.flow.create(input, null);
+    context.sqlite.query("UPDATE `order` SET paymentChannel = 'web' WHERE orderNo = ?").run(created.orderNo);
+    let verified = false;
+    definition.createAdapter = (values) => ({ ...originalAdapter(values), query: async () => ({ provider: "ALIPAY", orderNo: created.orderNo, amount: 1000, status: "PAID", verified, message: "TEST" }) });
+    await assert.rejects(() => context.flow.cancel(created.orderNo, null, input.contactValue), /ORDER_PAYMENT_CHECK_FAILED/);
+    assert.equal((context.sqlite.query("SELECT status FROM `order` WHERE orderNo = ?").get(created.orderNo) as { status: string }).status, "PENDING");
+    verified = true;
+    await assert.rejects(() => context.flow.cancel(created.orderNo, null, input.contactValue), /ORDER_CANNOT_CANCEL/);
+    assert.equal((context.sqlite.query("SELECT paymentStatus FROM `order` WHERE orderNo = ?").get(created.orderNo) as { paymentStatus: string }).paymentStatus, "PAID");
+  } finally { definition.createAdapter = originalAdapter; context.close(); }
 });

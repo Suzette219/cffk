@@ -144,6 +144,40 @@ export class PaymentFlowService {
     }
   }
 
+  async cancel(orderNo: string, ownerUserId: string | null, email?: string) {
+    const access = orderAccess(ownerUserId, email);
+    if (!orderNo.trim() || !access) appError("ORDER_NOT_FOUND");
+    const db = createDrizzleDb(this.database);
+    const [record] = await db.select().from(order).where(and(eq(order.orderNo, orderNo.trim()), access)).limit(1);
+    if (!record) appError("ORDER_NOT_FOUND");
+    if (record.status === "CLOSED" && record.paymentStatus === "UNPAID") return { orderNo: record.orderNo, status: "CLOSED" as const };
+    if (record.status !== "PENDING" || record.paymentStatus !== "UNPAID") appError("ORDER_CANNOT_CANCEL");
+
+    // Reconcile API payments before cancelling; manual collection has no payment API.
+    if (!isManualAlipayOrder(record)) {
+      const provider = await getEnabledPaymentProvider(this.database, record.paymentProvider as PaymentProviderKind);
+      const adapter = provider && getProviderDefinition(provider.provider)?.createAdapter(JSON.parse(provider.configJson));
+      if (adapter?.query) {
+        const attempt = await paymentRepository(this.database).latestAttempt(record.id);
+        let payment;
+        try { payment = await adapter.query({ orderNo: record.orderNo, amount: record.amount, paymentOrderNo: attempt?.paymentOrderNo ?? undefined }); }
+        catch { appError("ORDER_PAYMENT_CHECK_FAILED"); }
+        if (!payment.verified || payment.orderNo !== record.orderNo) appError("ORDER_PAYMENT_CHECK_FAILED");
+        if (payment.status === "PAID") {
+          if (payment.amount !== record.amount) appError("ORDER_PAYMENT_CHECK_FAILED");
+          await this.confirm(record.orderNo, "CANCEL_QUERY", payment.amount, attempt?.id);
+          appError("ORDER_CANNOT_CANCEL");
+        }
+      }
+    }
+    const result = await closePendingOrder(this.database, record.id, "USER_CANCEL");
+    if (!result.closed) {
+      const [current] = await db.select({ status: order.status, paymentStatus: order.paymentStatus }).from(order).where(eq(order.id, record.id)).limit(1);
+      if (current?.status !== "CLOSED" || current.paymentStatus !== "UNPAID") appError("ORDER_CANNOT_CANCEL");
+    }
+    return { orderNo: record.orderNo, status: "CLOSED" as const };
+  }
+
   // Only invoked by the administrator-only order action.
   async confirmManual(orderId: number, receivedAmount: string, adminUserId: string) {
     if (!adminUserId) appError("ADMIN_ACCESS_REQUIRED");

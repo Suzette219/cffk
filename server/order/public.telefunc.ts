@@ -86,3 +86,13 @@ async function internalOnQueryOrder(input: {
 export const onListAccountOrders = telefuncAction(internalOnListAccountOrders);
 export const onResumeOrderPayment = telefuncAction(internalOnResumeOrderPayment);
 export const onQueryOrder = telefuncAction(internalOnQueryOrder);
+
+async function internalOnCancelOrder(input: { orderNo: string; email?: string }) {
+  const context = getContext<TelefuncContext>();
+  if (!context.env?.DB) appError("DATABASE_UNAVAILABLE");
+  const userId = context.user?.id ?? null;
+  await enforceOrderRequestRateLimit(context.env.DB, { action: "CANCEL", userId, clientIp: context.clientIp });
+  return new PaymentFlowService(context.env.DB, context.env).cancel(input.orderNo, userId, input.email);
+}
+
+export const onCancelOrder = telefuncAction(internalOnCancelOrder);

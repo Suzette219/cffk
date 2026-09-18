@@ -51,9 +51,9 @@
               <div class="flex min-w-0 items-baseline justify-between gap-4"><CardTitle class="min-w-0 truncate text-xl">{{ result.productName }}</CardTitle><p class="shrink-0 break-all text-right font-mono text-xs leading-5 text-muted-foreground">{{ result.orderNo }}</p></div>
             </CardHeader>
             <CardContent class="flex flex-col gap-6 pt-6 text-sm"><dl class="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4"><div><dt class="text-xs text-muted-foreground">{{ messages.accountOrders.detail.quantity }}</dt><dd class="mt-1 font-medium">{{ result.quantity }}</dd></div><div><dt class="text-xs text-muted-foreground">{{ messages.accountOrders.detail.amount }}</dt><dd class="mt-1 font-medium">¥{{ result.amount }}</dd></div><div><dt class="text-xs text-muted-foreground">{{ messages.accountOrders.detail.paymentStatus }}</dt><dd class="mt-1 font-medium">{{ paymentStatusLabel(result.paymentStatus) }}</dd></div><div><dt class="text-xs text-muted-foreground">{{ messages.accountOrders.detail.deliveryStatus }}</dt><dd class="mt-1 font-medium">{{ deliveryStatusLabel(result.deliveryStatus) }}</dd></div></dl><div v-if="result.deliveries.length" class="min-w-0 border-t pt-6"><p class="mb-3 font-medium">{{ messages.accountOrders.detail.deliveryContents }}</p><pre class="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-md border bg-muted/50 p-4 font-mono text-xs leading-6">{{ result.deliveries.join("\n") }}</pre></div><Alert v-else-if="result.paymentStatus === 'PAID'"><AlertTitle>{{ messages.accountOrders.detail.awaitingDeliveryTitle }}</AlertTitle><AlertDescription>{{ messages.accountOrders.detail.awaitingDeliveryDescription }}</AlertDescription></Alert></CardContent>
-            <CardFooter v-if="result.paymentStatus === 'UNPAID'" class="justify-end border-t pt-5"><Button v-if="isFaceToFacePayment" as-child><a :href="`/checkout?orderNo=${encodeURIComponent(result.orderNo)}`">{{ messages.accountOrders.payment.goToPayment }}</a></Button><Button v-else :disabled="resumingPayment" @click="resumePayment">{{ resumingPayment ? messages.accountOrders.payment.generating : messages.accountOrders.payment.resume }}</Button></CardFooter>
+            <CardFooter v-if="result.status === 'PENDING' && result.paymentStatus === 'UNPAID'" class="flex-wrap items-end justify-end gap-3 border-t pt-5"><OrderPaymentControls :key="result.orderNo" :order-no="result.orderNo" :created-at="result.createdAt" :disabled="resumingPayment" @busy="cancellingPayment = $event" @cancelled="refreshSelectedOrder" @refresh="refreshSelectedOrder" /><Button v-if="isFaceToFacePayment" :disabled="cancellingPayment" as-child><a :href="`/checkout?orderNo=${encodeURIComponent(result.orderNo)}`">{{ messages.accountOrders.payment.goToPayment }}</a></Button><Button v-else :disabled="resumingPayment || cancellingPayment" @click="resumePayment">{{ resumingPayment ? messages.accountOrders.payment.generating : messages.accountOrders.payment.resume }}</Button></CardFooter>
           </Card>
-          <Card v-else class="h-full w-full lg:flex lg:flex-col"><CardHeader class="border-b"><CardDescription>{{ messages.accountOrders.list.eyebrow }}</CardDescription><CardTitle class="text-xl">{{ messages.accountOrders.list.title }}</CardTitle><p class="text-sm leading-6 text-muted-foreground">{{ messages.accountOrders.list.description }}</p></CardHeader><CardContent v-if="loading" class="p-6 text-sm text-muted-foreground">{{ messages.accountOrders.list.loading }}</CardContent><CardContent v-else-if="loadError" class="p-6"><Alert variant="destructive"><AlertTitle>{{ messages.accountOrders.list.loadFailed }}</AlertTitle><AlertDescription>{{ loadError }}</AlertDescription></Alert><Button class="mt-4" type="button" variant="outline" size="sm" @click="loadOrders">{{ messages.accountOrders.list.reload }}</Button></CardContent><CardContent v-else-if="orders.length" class="min-h-0 flex-1 overflow-hidden p-0"><OrderList :groups="[{ key: 'account', orders }]" :on-select="item => openOrder(item as AccountOrderSummary)" :status-label="statusLabel" :status-variant="statusVariant" /></CardContent><CardContent v-else class="flex-1 p-6 text-sm text-muted-foreground">{{ messages.accountOrders.list.empty }}</CardContent><CardFooter v-if="orders.length && truncated" class="border-t pt-4 text-xs text-muted-foreground">{{ t(messages.accountOrders.list.truncated, { limit: 50 }) }}</CardFooter></Card>
+          <Card v-else class="h-full w-full lg:flex lg:flex-col"><CardHeader class="border-b"><CardDescription>{{ messages.accountOrders.list.eyebrow }}</CardDescription><CardTitle class="text-xl">{{ messages.accountOrders.list.title }}</CardTitle><p class="text-sm leading-6 text-muted-foreground">{{ messages.accountOrders.list.description }}</p></CardHeader><CardContent v-if="loading" class="p-6 text-sm text-muted-foreground">{{ messages.accountOrders.list.loading }}</CardContent><CardContent v-else-if="loadError" class="p-6"><Alert variant="destructive"><AlertTitle>{{ messages.accountOrders.list.loadFailed }}</AlertTitle><AlertDescription>{{ loadError }}</AlertDescription></Alert><Button class="mt-4" type="button" variant="outline" size="sm" @click="loadOrders">{{ messages.accountOrders.list.reload }}</Button></CardContent><CardContent v-else-if="orders.length" class="min-h-0 flex-1 overflow-hidden p-0"><OrderList :groups="[{ key: 'account', orders }]" :on-select="item => openOrder(item as AccountOrderSummary)" :status-label="statusLabel" :status-variant="statusVariant" @refresh="refreshOrdersIfDue" /></CardContent><CardContent v-else class="flex-1 p-6 text-sm text-muted-foreground">{{ messages.accountOrders.list.empty }}</CardContent><CardFooter v-if="orders.length && truncated" class="border-t pt-4 text-xs text-muted-foreground">{{ t(messages.accountOrders.list.truncated, { limit: 50 }) }}</CardFooter></Card>
         </section>
       </div>
     </section>
@@ -76,6 +76,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { runTelefunc, userErrorMessage } from "@/lib/telefunc-client";
+import { orderStatusVariant as statusVariant } from "@/lib/order-state";
+import OrderPaymentControls from "@/components/storefront/OrderPaymentControls.vue";
 import { cacheQrPayment } from "@/lib/payment-utils";
 import { useStorefrontPreferences } from "@/lib/storefront-preferences";
 import { onListAccountOrders, onQueryOrder, onResumeOrderPayment, type AccountOrderSummary, type PublicOrder } from "@/server/order/public.telefunc";
@@ -90,6 +92,7 @@ const loadError = ref<string | null>(null);
 const truncated = ref(false);
 const result = ref<PublicOrder | null>(null);
 const resumingPayment = ref(false);
+const cancellingPayment = ref(false);
 
 const activeOrderNo = ref("");
 const orderNoInput = ref(requestedOrderNo);
@@ -110,6 +113,13 @@ onMounted(() => {
   if (requestedOrderNo) void queryOrder(requestedOrderNo);
 });
 
+
+let lastListRefresh = 0;
+function refreshOrdersIfDue() {
+  if (loading.value || Date.now() - lastListRefresh < 30_000) return;
+  lastListRefresh = Date.now();
+  void loadOrders();
+}
 
 async function loadOrders() {
   if (loading.value) return;
@@ -138,6 +148,18 @@ async function queryOrder(orderNo: string) {
   } catch (cause) { toast.error(userErrorMessage(cause)); }
 }
 
+async function refreshSelectedOrder() {
+  const orderNo = result.value?.orderNo;
+  if (!orderNo) return;
+  try {
+    const record = await runTelefunc(() => onQueryOrder({ orderNo }), { notifyError: false });
+    if (record && result.value?.orderNo === orderNo) {
+      result.value = record;
+      orders.value = orders.value.map((item) => item.orderNo === orderNo ? { ...item, status: record.status, paymentStatus: record.paymentStatus, deliveryStatus: record.deliveryStatus } : item);
+    }
+  } catch { /* Retry on the next refresh. */ }
+}
+
 async function resumePayment() {
   if (!result.value || resumingPayment.value || !activeOrderNo.value) return;
   resumingPayment.value = true;
@@ -151,5 +173,5 @@ async function resumePayment() {
 function statusLabel(status: string) { return ({ PENDING: messages.value.accountOrders.status.pending, PAID: messages.value.accountOrders.status.paid, DELIVERED: messages.value.accountOrders.status.delivered, CLOSED: messages.value.accountOrders.status.closed, FAILED: messages.value.accountOrders.status.failed } as Record<string, string>)[status] ?? status; }
 function paymentStatusLabel(status: PublicOrder["paymentStatus"]) { return { UNPAID: messages.value.accountOrders.paymentStatus.unpaid, PAID: messages.value.accountOrders.paymentStatus.paid, FAILED: messages.value.accountOrders.paymentStatus.failed }[status]; }
 function deliveryStatusLabel(status: PublicOrder["deliveryStatus"]) { return { NOT_DELIVERED: messages.value.accountOrders.deliveryStatus.notDelivered, DELIVERING: messages.value.accountOrders.deliveryStatus.delivering, DELIVERED: messages.value.accountOrders.deliveryStatus.delivered, FAILED: messages.value.accountOrders.deliveryStatus.failed }[status]; }
-function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" { return status === "DELIVERED" || status === "PAID" ? "secondary" : status === "FAILED" ? "destructive" : "outline"; }
+
 </script>
