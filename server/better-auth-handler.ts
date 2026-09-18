@@ -45,7 +45,7 @@ export const betterAuthSessionMiddleware: UniversalMiddleware = enhance(
       const [account] = userId
         ? await getDrizzleDb(runtime)
             .select({
-              disabledAt: schema.user.disabledAt,
+              disabledAt: schema.user.disabledAt, deletedAt: schema.user.deletedAt,
               rootUserId: schema.adminBootstrap.userId,
             })
             .from(schema.user)
@@ -53,7 +53,7 @@ export const betterAuthSessionMiddleware: UniversalMiddleware = enhance(
             .where(eq(schema.user.id, userId))
             .limit(1)
         : [];
-      const isDisabled = Boolean(account?.disabledAt);
+      const isDisabled = !account || Boolean(account.disabledAt || account.deletedAt);
       return {
         ...context,
         // Disabled accounts are treated as signed out, including existing sessions.
@@ -100,12 +100,12 @@ export const betterAuthHandler = enhance(
       const isAdminLogin = authRequest.headers.get("x-cffk-admin-login") === "1";
       if (email) {
         const [account] = await getDrizzleDb(runtime)
-          .select({ disabledAt: schema.user.disabledAt, rootUserId: schema.adminBootstrap.userId })
+          .select({ disabledAt: schema.user.disabledAt, deletedAt: schema.user.deletedAt, rootUserId: schema.adminBootstrap.userId })
           .from(schema.user)
           .leftJoin(schema.adminBootstrap, eq(schema.adminBootstrap.userId, schema.user.id))
           .where(sql`lower(${schema.user.email}) = ${email}`)
           .limit(1);
-        if (isAdminLogin && (!account || account.disabledAt || !account.rootUserId)) {
+        if (isAdminLogin && (!account || account.disabledAt || account.deletedAt || !account.rootUserId)) {
           return withAuthNoStore(Response.json(
             { code: "INVALID_ADMIN_CREDENTIALS", message: "Invalid credentials." },
             { status: 401 },
@@ -117,7 +117,7 @@ export const betterAuthHandler = enhance(
             { status: 401 },
           ));
         }
-        if (account?.disabledAt) {
+        if (account?.disabledAt || account?.deletedAt) {
           return withAuthNoStore(Response.json({ code: "ACCOUNT_DISABLED", message: "Account is disabled." }, { status: 403 }));
         }
       }

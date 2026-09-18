@@ -23,11 +23,19 @@
         <div class="flex justify-end gap-1">
           <Button variant="ghost" size="sm" :disabled="changingUserId === row.id || editing" @click="openEditDialog(row)"><PencilIcon />编辑</Button>
           <Button variant="ghost" size="sm" :disabled="changingUserId === row.id || editing" @click="requestStatusChange(row)">{{ row.disabledAt ? "启用" : "禁用" }}</Button>
+          <Button variant="destructive" size="sm" :disabled="Boolean(changingUserId) || editing || deletingUser" @click="deleteTarget = row">删除</Button>
         </div>
       </template>
       <template #pagination><Pagination :total="total" :page="page" :page-size="pageSize" :page-size-options="[10, 20, 50, 100]" @update:page="changePage" @update:page-size="changePageSize" /></template>
     </AdminDataTable>
 
+    <Dialog :open="Boolean(deleteTarget)" @update:open="!deletingUser && !$event && (deleteTarget = null)">
+      <DialogContent :show-close-button="!deletingUser" @interact-outside.prevent @escape-key-down.prevent>
+        <DialogHeader><DialogTitle>删除用户</DialogTitle><DialogDescription>删除后用户将从管理列表移除，不能再登录，所有登录会话立即失效。历史订单和付款记录保留；该邮箱仍被占用，不能重新注册。</DialogDescription></DialogHeader>
+        <p class="break-all text-sm">{{ deleteTarget?.name }} · {{ deleteTarget?.email }}</p>
+        <DialogFooter><Button variant="outline" :disabled="deletingUser" @click="deleteTarget = null">取消</Button><Button variant="destructive" :disabled="deletingUser" @click="deleteUser">{{ deletingUser ? '删除中...' : '确认删除' }}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog v-model:open="createDialogOpen">
       <DialogContent class="max-w-md" @interact-outside.prevent @escape-key-down.prevent>
         <DialogHeader><DialogTitle>添加用户</DialogTitle><DialogDescription>新用户为普通用户，邮箱将直接视为已验证，不会发送验证邮件。</DialogDescription></DialogHeader>
@@ -78,7 +86,7 @@ import { Input } from "@/components/ui/input";
 import Pagination from "@/components/ui/pagination/Pagination.vue";
 import { formatDateInTimezone, useSiteTimezone } from "@/lib/site-timezone";
 import { runTelefunc } from "@/lib/telefunc-client";
-import { onCreateAdminUser, onGetAdminUsers, onSetAdminUserDisabled, onUpdateAdminUser } from "@/server/user/admin.telefunc";
+import { onDeleteAdminUser, onCreateAdminUser, onGetAdminUsers, onSetAdminUserDisabled, onUpdateAdminUser } from "@/server/user/admin.telefunc";
 
 type User = Awaited<ReturnType<typeof onGetAdminUsers>>["users"][number];
 type CreateUserForm = { name: string; email: string; password: string };
@@ -99,6 +107,19 @@ const columns: AdminTableColumn<User>[] = [
   { key: "name", label: "昵称" }, { key: "email", label: "邮箱" }, { key: "status", label: "状态" }, { key: "emailVerified", label: "邮箱验证" }, { key: "twoFactorEnabled", label: "双因素认证" }, { key: "createdAt", label: "注册时间" },
 ];
 const timezone = useSiteTimezone();
+const deleteTarget = ref<User | null>(null);
+const deletingUser = ref(false);
+async function deleteUser() {
+  const target = deleteTarget.value;
+  if (!target || deletingUser.value) return;
+  deletingUser.value = true;
+  try {
+    await runTelefunc(() => onDeleteAdminUser({ userId: target.id }), { successMessage: "用户已删除，登录会话已失效。" });
+    deleteTarget.value = null;
+    if (users.value.length === 1 && page.value > 1) page.value -= 1;
+    await loadUsers();
+  } catch { /* runTelefunc owns feedback. */ } finally { deletingUser.value = false; }
+}
 const users = ref<User[]>([]); const query = ref(""); const page = ref(1); const pageSize = ref(10); const total = ref(0); const loading = ref(false);
 type FormRef<T> = { resetForm: (state?: { values?: T }) => void };
 const createDialogOpen = ref(false); const creating = ref(false); const editDialogOpen = ref(false); const editing = ref(false); const editTarget = ref<User | null>(null); const changingUserId = ref<string | null>(null); const statusDialogOpen = ref(false); const statusTarget = ref<User | null>(null);

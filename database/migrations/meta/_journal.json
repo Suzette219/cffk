@@ -36,6 +36,13 @@
       "when": 1789723146057,
       "tag": "0004_order_payment_proof",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789727715936,
+      "tag": "0005_admin_soft_delete",
+      "breakpoints": true
     }
   ]
 }
