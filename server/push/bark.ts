@@ -1,12 +1,12 @@
-// Keep the device key in Worker secrets; never put it in URLs or logs.
+// Keep the device key in Worker secrets; never log the outgoing Bark URL.
 export async function sendBarkOrderCreated(runtime: Record<string, unknown>, variables: Record<string, string | number>) {
   const key = typeof runtime.BARK_DEVICE_KEY === "string" ? runtime.BARK_DEVICE_KEY.trim() : "";
   if (!key) return;
   try {
-    const response = await fetch("https://api.day.app/push", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ device_key: key, title: "有订单", body: `订单号：${variables.orderNo}`, group: "商城订单" }),
+    const message = `有订单\n订单号：${variables.orderNo}`;
+    const url = `https://api.day.app/${encodeURIComponent(key)}/${encodeURIComponent(message)}`;
+    const response = await fetch(url, {
+      method: "GET",
       redirect: "error",
       signal: AbortSignal.timeout(8000),
     });

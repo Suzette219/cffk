@@ -17,18 +17,18 @@ const input = { productId: 1, productSkuId: 1, quantity: 2, paymentProvider: "AL
 
 test("new order queues one Bark push containing only the order notice and number", async () => {
   const c = fixture(), originalFetch = globalThis.fetch;
-  const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const requests: Array<{ url: string; method?: string; body?: BodyInit | null }> = [];
   try {
-    globalThis.fetch = (async (url, init) => { requests.push({url:String(url),body:JSON.parse(String(init?.body))});return new Response(JSON.stringify({code:200})); }) as typeof fetch;
+    globalThis.fetch = (async (url, init) => { requests.push({url:String(url),method:init?.method,body:init?.body});return new Response(JSON.stringify({code:200})); }) as typeof fetch;
     const created = await createOrder(c.database, input, null);
     assert.equal(requests.length,0);
     assert.equal(c.sqlite.query("SELECT count(*) AS n FROM orderEvent WHERE scene = 'ORDER_CREATED'").get().n,1);
     assert.deepEqual(await processOrderEvents(c.database, { BARK_DEVICE_KEY: "test-device-key" }), {attempted:1,processed:1,failed:0});
     assert.equal(requests.length,1);
-    assert.equal(requests[0].url,"https://api.day.app/push");
-    assert.equal(requests[0].body.device_key,"test-device-key");
-    assert.deepEqual(requests[0].body, { device_key: "test-device-key", title: "有订单", body: `订单号：${created.orderNo}`, group: "商城订单" });
-    assert.ok(!JSON.stringify(requests[0].body).includes(input.contactValue));
+    assert.equal(requests[0].url, `https://api.day.app/test-device-key/${encodeURIComponent(`有订单\n订单号：${created.orderNo}`)}`);
+    assert.equal(requests[0].method, "GET");
+    assert.equal(requests[0].body, undefined);
+    assert.ok(!decodeURIComponent(requests[0].url).includes(input.contactValue));
     assert.deepEqual(await processOrderEvents(c.database, { BARK_DEVICE_KEY: "test-device-key" }),{attempted:0,processed:0,failed:0});
   } finally {globalThis.fetch=originalFetch;c.close();}
 });
