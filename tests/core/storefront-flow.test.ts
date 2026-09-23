@@ -78,9 +78,10 @@ async function runStorefrontFlow(identity: FlowIdentity) {
       },
     },
   });
-  expect(eventResult).toEqual({ attempted: 2, processed: 2, failed: 0 });
+  expect(eventResult).toEqual({ attempted: 3, processed: 3, failed: 0 });
 
   expect(context.sqlite.query("SELECT scene, status FROM orderEvent ORDER BY id").all()).toEqual([
+    { scene: "ORDER_CREATED", status: "PROCESSED" },
     { scene: "ORDER_PAID", status: "PROCESSED" },
     { scene: "DELIVERY_SUCCESS", status: "PROCESSED" },
   ]);

@@ -1,7 +1,8 @@
-import { and, eq, lte, or } from "drizzle-orm";
+import { and, asc, eq, lte, or } from "drizzle-orm";
 import { createDrizzleDb } from "@/database/drizzle";
 import { orderEvent } from "@/database/drizzle/schema";
 import { dispatchPush, orderPushVariables } from "@/server/push/service";
+import { sendBarkOrderCreated } from "@/server/push/bark";
 import { pushDispatchHandled } from "@/server/push/types";
 
 type EmailRuntime = Record<string, unknown>;
@@ -25,9 +26,14 @@ export async function enqueueOrderEvent(database: D1Database, input: { eventKey:
 
 
 async function dispatchEvent(database: D1Database, runtime: EmailRuntime, event: typeof orderEvent.$inferSelect) {
+  if (event.scene === "ORDER_CREATED" && (typeof runtime.BARK_DEVICE_KEY !== "string" || !runtime.BARK_DEVICE_KEY.trim())) return [];
   const variables = await orderPushVariables(database, event.orderId);
   if (!variables) throw new Error("ORDER_PUSH_VARIABLES_UNAVAILABLE");
   const payload = { ...variables, ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}) };
+  if (event.scene === "ORDER_CREATED") {
+    await sendBarkOrderCreated(runtime, payload);
+    return [];
+  }
   const source = `order-event:${event.id}`;
   if (event.scene === "DELIVERY_FAILED" || event.scene === "PAYMENT_EXCEPTION") {
     return dispatchPush(database, runtime, { scene: event.scene, messageType: "ADMIN", orderId: event.orderId, variables: payload, source });
@@ -42,6 +48,7 @@ export async function processOrderEvents(database: D1Database, runtime: EmailRun
   const db = createDrizzleDb(database);
   const candidates = await db.select().from(orderEvent)
     .where(and(lte(orderEvent.availableAt, now), or(eq(orderEvent.status, "PENDING"), and(eq(orderEvent.status, "PROCESSING"), lte(orderEvent.leaseUntil, now)))))
+    .orderBy(asc(orderEvent.availableAt), asc(orderEvent.id))
     .limit(Math.min(100, Math.max(1, limit)));
   let processed = 0;
   let failed = 0;

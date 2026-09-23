@@ -11,3 +11,6 @@ BETTER_AUTH_SECRET=
 # TURNSTILE_SITE_KEY=
 # 服务端 Secret Key
 # TURNSTILE_SECRET_KEY=
+
+# Bark 新订单推送：填写设备 Key，不要填写完整 URL。线上配置为 Worker Secret。
+# BARK_DEVICE_KEY=

@@ -166,6 +166,7 @@ export async function createOrder(database: D1Database, input: CreateOrderInput,
       database.prepare("INSERT INTO transactionGuard (id, value) VALUES (1, changes()) ON CONFLICT(id) DO UPDATE SET value = excluded.value"),
     );
   }
+  statements.push(database.prepare("INSERT INTO orderEvent (eventKey, orderId, scene, status, attemptCount, availableAt, createdAt, updatedAt) SELECT 'order-created:' || id, id, 'ORDER_CREATED', 'PENDING', 0, ?, ?, ? FROM `order` WHERE orderNo = ? ON CONFLICT(eventKey) DO NOTHING").bind(now, now, now, orderNo));
   try {
     await database.batch(statements);
   } catch (cause) {

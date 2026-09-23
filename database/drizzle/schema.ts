@@ -338,7 +338,7 @@ export const orderEvent = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     eventKey: text("eventKey").notNull(),
     orderId: integer("orderId").notNull().references(() => order.id, { onDelete: "cascade" }),
-    scene: text("scene", { enum: ["ORDER_PAID", "DELIVERY_SUCCESS", "DELIVERY_FAILED", "PAYMENT_EXCEPTION"] }).notNull(),
+    scene: text("scene", { enum: ["ORDER_CREATED", "ORDER_PAID", "DELIVERY_SUCCESS", "DELIVERY_FAILED", "PAYMENT_EXCEPTION"] }).notNull(),
     errorMessage: text("errorMessage"),
     status: text("status", { enum: ["PENDING", "PROCESSING", "PROCESSED"] }).notNull().default("PENDING"),
     attemptCount: integer("attemptCount").notNull().default(0),
